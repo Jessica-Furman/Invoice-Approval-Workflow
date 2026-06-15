@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Write-Output \"python:\"; \\(Get-Command python -ErrorAction SilentlyContinue\\).Source; python --version 2>&1; Write-Output \"node:\"; \\(Get-Command node -ErrorAction SilentlyContinue\\).Source; node --version 2>&1; Write-Output \"npm:\"; npm --version 2>&1; Write-Output \"docker:\"; \\(Get-Command docker -ErrorAction SilentlyContinue\\).Source; docker --version 2>&1)",
+      "PowerShell(Write-Output \"winget:\"; \\(Get-Command winget -ErrorAction SilentlyContinue\\).Source; Write-Output \"choco:\"; \\(Get-Command choco -ErrorAction SilentlyContinue\\).Source; Write-Output \"admin:\"; \\([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent\\(\\)\\).IsInRole\\([Security.Principal.WindowsBuiltInRole]::Administrator\\); Write-Output \"wsl:\"; \\(Get-Command wsl -ErrorAction SilentlyContinue\\).Source)"
+    ]
+  }
+}

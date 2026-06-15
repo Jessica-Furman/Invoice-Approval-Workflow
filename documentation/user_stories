@@ -1,0 +1,505 @@
+# Contractor Invoice Processing System — User Stories
+
+Converted from the uploaded Word document into Markdown.
+
+### User Story 1: Detect and download invoice attachments
+
+**As the system,**
+
+**I want** to detect PDF invoice attachments from emails in the contractor invoice inbox,
+
+**So that** each invoice can be stored, parsed, and tracked.
+
+#### Acceptance Criteria
+
+- The system identifies PDF attachments.
+- The system downloads the PDF invoice.
+- The PDF is stored in an S3 bucket.
+- The S3 file path is saved in PostgreSQL.
+- If no valid invoice attachment exists, the email is marked for manual review.
+
+## 2. Invoice Parsing and Data Extraction
+
+### User Story 2: Parse invoice data into structured JSON
+
+**As the system,**
+
+**I want** to extract required invoice fields into a structured JSON format,
+
+**So that** invoice data can be normalized and stored consistently.
+
+#### Required Fields
+
+- `vendor_name`
+- `contractor_name`
+- `invoice_number`
+- `date_received`
+- `payment_period`
+- `hourly_or_fixed_rate`
+- `hours_worked`
+- `total_invoice_cost`
+
+#### Acceptance Criteria
+
+- Each invoice is parsed into the same JSON structure.
+- Missing fields are marked as null or flagged.
+- Parsed invoice data is saved to PostgreSQL.
+- The original PDF remains linked to the parsed record.
+
+### User Story 3: Normalize parsed invoice data
+
+**As the system,**
+
+**I want** to normalize invoice data before matching,
+
+**So that** dates, names, rates, hours, and totals can be compared accurately against Clarity data.
+
+#### Acceptance Criteria
+
+- Dates are converted into a standard format.
+- Currency values are converted into numeric values.
+- Hours are converted into numeric values.
+- Contractor and vendor names are cleaned for matching.
+- The normalized data is stored separately from the raw extracted data.
+
+## 3. Clarity Data Import
+
+### User Story 4: Import Clarity timesheet data
+
+**As the system,**
+
+**I want** to import Clarity timesheet data,
+
+**So that** contractor invoice hours and pay can be matched against Upbound’s system of record.
+
+#### Acceptance Criteria
+
+- The system imports contractor names, hours worked, hourly rates, and payment periods from Clarity.
+- Imported Clarity records are saved in PostgreSQL.
+- Each Clarity record includes enough information to match against invoice records.
+- The import process can be repeated without creating duplicate records.
+
+### User Story 5: Import Clarity project data
+
+**As the system,**
+
+**I want** to import project data from Clarity,
+
+**So that** each matched invoice can be enriched with accounting and project information.
+
+#### Required Fields
+
+- Budget ID
+- CapEx or OpEx classification
+- Cost center
+- Project name and project ID
+- Contractor assignment information
+
+#### Acceptance Criteria
+
+- Project data is stored in PostgreSQL.
+- Project data can be linked to contractor timesheet records by contractor name.
+- Project data can be included in the Coupa CSV output.
+
+## 4. Contractor Name Matching
+
+### User Story 6: Match contractor names between invoices and Clarity
+
+**As the system,**
+
+**I want** to match contractor names from invoices to contractor names in Clarity,
+
+**So that** invoice records can be compared against the correct timesheet records.
+
+#### Acceptance Criteria
+
+- The system attempts to match contractor names directly.
+- The system supports normalized matching, such as removing punctuation, extra spaces, and case differences.
+- If a direct match is not found, the system checks the contractor name cross-reference table.
+- If no match is found, the invoice is flagged and moved to the flagged inbox in outlook.
+
+### User Story 7: Maintain a contractor name cross-reference table
+
+**As a manual invoice processor,**
+
+**I want** to update a contractor name cross-reference table,
+
+**So that** future invoices with name variations can be matched automatically.
+
+#### Acceptance Criteria
+
+- The table stores invoice contractor names and corresponding Clarity names.
+- The backend can access the table during the matching process.
+- Users can add or update mappings over time.
+- Once a mapping is added, future invoices using that name variation are processed automatically.
+
+## 5. Invoice-to-Clarity Matching
+
+### User Story 8: Match invoice hours against Clarity hours
+
+**As the system,**
+
+**I want** to compare invoice hours against Clarity timesheet hours,
+
+**So that** the system can determine whether the invoice should be approved or flagged.
+
+#### Acceptance Criteria
+
+- The system compares invoice hours to Clarity hours for the same contractor and payment period.
+- If hours match, the invoice passes the hours validation.
+- If hours do not match, the invoice is flagged.
+- The difference between invoice hours and Clarity hours is saved.
+
+### User Story 9: Match invoice rate against Clarity rate
+
+**As the system,**
+
+**I want** to compare the contractor’s invoice rate against the Clarity rate,
+
+**So that** incorrect billing rates can be detected.
+
+#### Acceptance Criteria
+
+- The system compares the invoice hourly or fixed rate against the Clarity rate.
+- If rates match, the invoice passes the rate validation.
+- If rates do not match, the invoice is flagged.
+- The difference between invoice rate and Clarity rate is saved.
+
+### User Story 10: Match invoice total against expected Clarity total
+
+**As the system,**
+
+**I want** to calculate the expected invoice total from Clarity data,
+
+**So that** the system can confirm the invoice amount is correct.
+
+#### Acceptance Criteria
+
+- The system calculates expected total cost using Clarity hours and rate.
+- The system compares the expected total to the invoice total.
+- If totals match, the invoice passes validation.
+- If totals do not match, the invoice is flagged.
+- The mismatch reason is stored in PostgreSQL.
+
+### User Story 11: Generate an invoice match status
+
+**As the system,**
+
+**I want** to generate a clear match status for every invoice,
+
+**So that** users can quickly see whether an invoice is approved or needs review.
+
+#### Statuses
+
+- `matched`
+- `flagged`
+- `needs_manual_review`
+- `processing_failed`
+
+#### Acceptance Criteria
+
+- Every invoice receives one status.
+- The status is saved in PostgreSQL.
+- The status determines where the invoice appears in the UI.
+- The status determines which Outlook inbox the invoice is moved to.
+
+## 6. Outlook Routing
+
+### User Story 12: Route matched invoices to the matched invoice inbox
+
+**As the system,**
+
+**I want** to move successfully matched invoices into a Matched Invoice inbox,
+
+**So that** approved invoices are separated from invoices needing review.
+
+#### Acceptance Criteria
+
+- Matched invoices are moved out of contractor_invoices.
+- Matched invoices are moved into “Matched Invoices”.
+- The routing action is logged.
+- The invoice status remains visible in the UI.
+
+### User Story 13: Route unmatched invoices to the flagged invoice inbox
+
+**As the system,**
+
+**I want** to move invoices with mismatches into a flagged invoices inbox,
+
+**So that** the manual invoice processor can review and correct them.
+
+#### Acceptance Criteria
+
+- Flagged invoices are moved out of contractor_invoices.
+- Flagged invoices are moved into flagged invoices.
+- The mismatch reason is saved.
+- The invoice appears in the flagged column in the UI.
+
+## 7. UI Dashboard
+
+### User Story 14: View all invoices in a three-column dashboard
+
+**As a manual invoice processor,**
+
+**I want** to view invoices in three columns,
+
+**So that** I can quickly understand the status of every processed invoice.
+
+#### Columns
+
+- Matched invoices
+- Flagged invoices
+- All invoices
+
+#### Acceptance Criteria
+
+- Every processed invoice appears in the All invoices column.
+- Matched invoices also appear in the Matched invoices column.
+- Flagged invoices also appear in the Flagged invoices column.
+- Each invoice appears as a clickable card.
+
+### User Story 15: Open an invoice detail card
+
+**As a manual invoice processor,**
+
+**I want** to click an invoice card and see invoice, Clarity, and project data side by side,
+
+**So that** I can verify whether the invoice was processed correctly.
+
+#### Acceptance Criteria
+
+- The card shows parsed invoice data.
+- The card shows matching Clarity timesheet data.
+- The card shows related project data.
+- The card shows match status and mismatch reasons.
+- The original PDF can be accessed from the detail view.
+
+### User Story 16: Show mismatch reasons clearly
+
+**As a manual invoice processor,**
+
+**I want** flagged invoice cards to clearly show what did not match,
+
+**So that** I can quickly identify and fix the issue.
+
+#### Acceptance Criteria
+
+- The UI highlights whether the mismatch is caused by name, hours, rate, total cost, period, or missing data.
+- The invoice value and Clarity value are shown side by side.
+- The user can identify the exact field causing the issue.
+- The flagged invoice remains visible until manually resolved.
+
+## 8. Manual Review and Correction
+
+### User Story 17: Manually review flagged invoices
+
+**As a manual invoice processor,**
+
+**I want** to review flagged invoices in the UI,
+
+**So that** I can determine whether the invoice needs correction or a cross-reference mapping.
+
+#### Acceptance Criteria
+
+- Flagged invoices are easy to access from the dashboard.
+- The system displays all extracted and matched data.
+- The system displays the mismatch reason.
+- The user can decide whether to fix the invoice, update a mapping table, or reprocess it.
+
+### User Story 18: Move corrected invoices into matched status
+
+**As a manual invoice processor,**
+
+**I want** to move a corrected invoice from flagged to matched,
+
+**So that** it can continue through the CSV creation process.
+
+#### Acceptance Criteria
+
+- A user can mark a reviewed invoice as matched.
+- The invoice status updates in PostgreSQL.
+- The card moves from the flagged column to the matched column.
+- The action is logged for audit purposes.
+
+## 9. Data Export
+
+### User Story 19: Export invoice review data to Excel
+
+**As a manual invoice processor,**
+
+**I want** to be able to download invoice, Clarity, and project data to Excel,
+
+**So that** I can manually review, audit, or share the data.
+
+#### Acceptance Criteria
+
+- Users can export data for one invoice.
+- Users can export data for multiple invoices.
+- The export includes invoice data, Clarity data, project data, match status, and mismatch reasons.
+- The export is formatted in a readable spreadsheet structure.
+
+## 10. Coupa CSV Generation
+
+### User Story 20: Generate a Coupa-ready CSV for matched invoices
+
+**As a manual invoice processor,**
+
+**I want** to click “Approved, create CSV” on a matched invoice,
+
+**So that** the system creates a CSV that can be uploaded into Coupa. I have the outline for what the CSV should be structured like and can upload it.
+
+#### Acceptance Criteria
+
+- The button only appears for matched invoices.
+- The CSV includes parsed invoice data.
+- The CSV includes matching Clarity data.
+- The CSV includes project data.
+- The CSV includes the first approval-chain manager.
+- The CSV follows the Coupa-required format.
+
+### User Story 21: Prevent CSV generation for flagged invoices
+
+**As the system,**
+
+**I want** to block CSV creation for flagged invoices,
+
+**So that** incorrect invoices are not sent to Coupa.
+
+#### Acceptance Criteria
+
+- Flagged invoices cannot generate a Coupa CSV.
+- The UI explains why CSV generation is unavailable.
+- The invoice must be corrected or manually moved to matched status before CSV generation.
+
+## 11. Approval Chain Manager Mapping
+
+### User Story 22: Identify the first approval-chain manager
+
+**As the system,**
+
+**I want** to identify the first person who should spark the Coupa approval chain,
+
+**So that** Coupa can route the invoice through the correct approval workflow.
+
+#### Acceptance Criteria
+
+- The system checks vendor-based approval mappings first when available.
+- If vendor-based mapping is unavailable, the system checks project-based manager mappings.
+- The first approval manager is added to the Coupa CSV.
+- If no approval manager is found, the invoice is flagged.
+
+### User Story 23: Maintain a project-to-manager cross-reference table
+
+**As a manual invoice processor,**
+
+**I want** to maintain a project-to-manager mapping table,
+
+**So that** the system can determine who should spark the Coupa approval chain.
+
+#### Acceptance Criteria
+
+- The table stores project identifiers and corresponding manager names or emails.
+- The backend can access the table during CSV creation.
+- Users can update the table over time.
+- Missing mappings create a clear flagged reason.
+
+## 12. Database and Audit Trail
+
+### User Story 24: Store all invoice processing data in PostgreSQL
+
+**As the system,**
+
+**I want** to store invoice, Clarity, project, matching, routing, and CSV data in PostgreSQL,
+
+**So that** every invoice has a complete processing record.
+
+#### Acceptance Criteria
+
+- Each invoice has a unique database record.
+- Raw extracted data and normalized data are stored.
+- Clarity match data is stored.
+- Project data is stored.
+- Match status and mismatch reasons are stored.
+- CSV generation status is stored.
+
+### User Story 25: Track invoice processing history
+
+**As an internal user,**
+
+**I want** the system to keep an audit trail of invoice processing actions,
+
+**So that** we can see what happened to each invoice.
+
+#### Acceptance Criteria
+
+- The system logs when an invoice is received.
+- The system logs when an invoice is parsed.
+- The system logs when matching is completed.
+- The system logs when an invoice is routed to matched or flagged.
+- The system logs when a CSV is created.
+- The system logs manual status changes.
+
+## 13. Error Handling
+
+### User Story 26: Flag invoices with missing required data
+
+**As the system,**
+
+**I want** to flag invoices when required fields are missing,
+
+**So that** incomplete invoices are not processed incorrectly.
+
+#### Acceptance Criteria
+
+- Missing vendor name, contractor name, invoice number, period, hours, rate, or total cost causes a manual review status.
+- The missing fields are clearly listed.
+- The invoice appears in the flagged column.
+- The user can see what data needs to be corrected.
+
+### User Story 27: Handle parsing failures
+
+**As the system,**
+
+**I want** to handle invoice parsing failures gracefully,
+
+**So that** users know when an invoice could not be processed.
+
+#### Acceptance Criteria
+
+- Parsing failures do not crash the system.
+- The invoice is marked as processing_failed.
+- The failure reason is stored.
+- The invoice appears in the flagged column for manual review.
+
+## 14. MVP Admin Functions
+
+### User Story 28: View and update cross-reference mappings
+
+**As a system admin or invoice processor,**
+
+**I want** to view and update contractor-name and project-manager cross-reference mappings,
+
+**So that** the system improves over time.
+
+#### Acceptance Criteria
+
+- Users can view existing mappings.
+- Users can add new mappings.
+- Users can edit incorrect mappings.
+- Updated mappings are used in future matching and CSV generation.
+
+### User Story 29: Reprocess an invoice
+
+**As a manual invoice processor,**
+
+**I want** to reprocess an invoice after fixing data or updating a mapping,
+
+**So that** the system can attempt to match it again.
+
+#### Acceptance Criteria
+
+- Users can trigger reprocessing from the UI.
+- The system reruns parsing, normalization, matching, and routing logic.
+- The invoice status updates based on the new result.
+- Reprocessing actions are logged.
+

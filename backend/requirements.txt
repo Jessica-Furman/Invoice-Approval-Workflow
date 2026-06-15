@@ -1,0 +1,30 @@
+# Core API + DB (M1+)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+python-multipart==0.0.20
+
+# Clarity import + Excel export (M2, M6)
+pandas==2.2.3
+openpyxl==3.1.5
+python-dateutil==2.9.0.post0
+
+# Matching (M4)
+rapidfuzz==3.11.0
+
+# Invoice parsing (M3) — hybrid rules + LLM fallback
+pdfplumber==0.11.5
+anthropic==0.42.0
+httpx==0.28.1
+
+# Tests
+pytest==8.3.4
+
+# --- Optional / later ---
+# psycopg2-binary==2.9.10   # enable for Postgres (DATABASE_URL=postgresql+psycopg2://...)
+# watchdog==6.0.0           # M3 folder-watch ingestion
+# boto3                     # M8 real S3
+# msal                      # M8 real Outlook (Microsoft Graph)

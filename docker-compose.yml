@@ -1,0 +1,24 @@
+# Postgres for local/prod use once Docker is available (you currently run on SQLite).
+# Start with:  docker compose up -d
+# Then set in .env:
+#   DATABASE_URL=postgresql+psycopg2://invoicee:invoicee@localhost:5432/invoicee
+services:
+  db:
+    image: postgres:16
+    container_name: invoicee-db
+    environment:
+      POSTGRES_USER: invoicee
+      POSTGRES_PASSWORD: invoicee
+      POSTGRES_DB: invoicee
+    ports:
+      - "5432:5432"
+    volumes:
+      - invoicee_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoicee"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  invoicee_pgdata:
