@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Date,
     DateTime,
     Float,
@@ -49,6 +50,8 @@ class Invoice(Base):
     parse_confidence: Mapped[float | None] = mapped_column(Float)
 
     coupa_csv_generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Which mock Outlook inbox the PDF was routed to ("matched" | "flagged"), per User Stories 12-13.
+    routed_to: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -88,6 +91,12 @@ class InvoiceLineItem(Base):
 
 
 class ClarityTimesheet(Base):
+    """Aggregated Clarity time: hours summed per contractor + period + investment(project).
+
+    Note: the real Clarity TimeEntry export carries hours but NOT a pay rate, so `rate` stays null
+    and rate validation (User Story 9) needs a separate rate source. Manager fields feed the
+    approval-chain mapping later (User Stories 22-23)."""
+
     __tablename__ = "clarity_timesheets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -95,10 +104,27 @@ class ClarityTimesheet(Base):
     contractor_name_normalized: Mapped[str | None] = mapped_column(String(255), index=True)
     hours: Mapped[float | None] = mapped_column(Float)
     rate: Mapped[float | None] = mapped_column(Float)
+    # Date-level granularity so hours can be filtered to an invoice's exact period.
+    date_worked: Mapped[date | None] = mapped_column(Date, index=True)
+    is_time_off: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    task_name: Mapped[str | None] = mapped_column(String(255))
+    # Only "Posted" timesheets count toward billable hours.
+    time_sheet_status: Mapped[str | None] = mapped_column(String(32))
+    is_posted: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # The Clarity pay-period (kept for reference/display).
     period_start: Mapped[date | None] = mapped_column(Date)
     period_end: Mapped[date | None] = mapped_column(Date)
     project_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    # Idempotent upsert key (hash of the source row) so re-imports don't duplicate.
+
+    # From the real export
+    resource_id: Mapped[str | None] = mapped_column(String(64))
+    resource_manager: Mapped[str | None] = mapped_column(String(255))
+    investment_name: Mapped[str | None] = mapped_column(String(255))
+    investment_manager: Mapped[str | None] = mapped_column(String(255))
+    charge_code: Mapped[str | None] = mapped_column(String(255))
+    capex_opex: Mapped[str | None] = mapped_column(String(16))
+
+    # Idempotent upsert key (hash of the grouping) so re-imports don't duplicate.
     source_row_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
 
 

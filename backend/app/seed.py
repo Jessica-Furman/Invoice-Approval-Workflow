@@ -6,20 +6,11 @@ dashboard's Flagged / Matched / All columns are all populated for the M1 demo.
 """
 from __future__ import annotations
 
-import re
 from datetime import date
 
 from app import models
 from app.db.base import Base, SessionLocal, engine
-
-
-def normalize_name(name: str | None) -> str | None:
-    if not name:
-        return None
-    n = name.lower().strip()
-    n = re.sub(r"[^a-z0-9\s]", "", n)
-    n = re.sub(r"\s+", " ", n)
-    return n
+from app.utils.names import normalize_name
 
 
 def _line(contractor, hours, rate, amount, status, diff=None):

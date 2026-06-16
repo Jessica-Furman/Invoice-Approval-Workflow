@@ -20,6 +20,7 @@ export interface InvoiceSummary {
   payment_period_end: string | null;
   total_invoice_cost: number | null;
   status: Status;
+  routed_to: string | null;
   line_item_count: number;
   matched_line_count: number;
 }
@@ -80,6 +81,14 @@ export interface DashboardResponse {
   all: InvoiceSummary[];
 }
 
+export function invoicePdfUrl(id: number): string {
+  return `${baseURL}/api/invoices/${id}/pdf`;
+}
+
+export function invoiceExcelUrl(id: number): string {
+  return `${baseURL}/api/invoices/${id}/export.xlsx`;
+}
+
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const { data } = await api.get<DashboardResponse>("/api/dashboard");
   return data;
@@ -87,5 +96,57 @@ export async function fetchDashboard(): Promise<DashboardResponse> {
 
 export async function fetchInvoice(id: number): Promise<InvoiceDetail> {
   const { data } = await api.get<InvoiceDetail>(`/api/invoices/${id}`);
+  return data;
+}
+
+export interface ClarityEntry {
+  id: number;
+  date_worked: string | null;
+  hours: number | null;
+  project_id: string | null;
+  investment_name: string | null;
+  task_name: string | null;
+  is_time_off: boolean;
+  is_posted: boolean;
+  included: boolean;
+}
+
+export async function fetchClarityEntries(
+  invoiceId: number,
+  lineItemId: number
+): Promise<ClarityEntry[]> {
+  const { data } = await api.get<ClarityEntry[]>(
+    `/api/invoices/${invoiceId}/lines/${lineItemId}/clarity-entries`
+  );
+  return data;
+}
+
+export interface ClaritySummary {
+  timesheets: number;
+  projects: number;
+  contractors: number;
+}
+
+export async function fetchClaritySummary(): Promise<ClaritySummary> {
+  const { data } = await api.get<ClaritySummary>("/api/clarity/summary");
+  return data;
+}
+
+export interface ClarityImportResult {
+  file: string;
+  source_rows: number;
+  aggregated_rows: number;
+  timesheets_created: number;
+  timesheets_updated: number;
+  projects_created: number;
+  warnings: string[];
+}
+
+export async function importClarity(file: File): Promise<ClarityImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post<ClarityImportResult>("/api/clarity/import", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
   return data;
 }

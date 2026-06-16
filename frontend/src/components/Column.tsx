@@ -1,5 +1,80 @@
+import { useMemo, useState } from "react";
+import { ArrowDownUp, Check } from "lucide-react";
 import type { InvoiceSummary } from "../api/client";
 import { InvoiceCard } from "./InvoiceCard";
+
+type SortKey =
+  | "default"
+  | "price_desc"
+  | "price_asc"
+  | "date_desc"
+  | "date_asc";
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "default", label: "Default order" },
+  { key: "price_desc", label: "Price: high → low" },
+  { key: "price_asc", label: "Price: low → high" },
+  { key: "date_desc", label: "Date: newest first" },
+  { key: "date_asc", label: "Date: oldest first" },
+];
+
+function sortInvoices(invoices: InvoiceSummary[], key: SortKey): InvoiceSummary[] {
+  if (key === "default") return invoices;
+  const copy = [...invoices];
+  const price = (i: InvoiceSummary) => i.total_invoice_cost ?? 0;
+  const time = (i: InvoiceSummary) =>
+    i.date_received ? new Date(i.date_received + "T00:00:00").getTime() : 0;
+  switch (key) {
+    case "price_desc":
+      return copy.sort((a, b) => price(b) - price(a));
+    case "price_asc":
+      return copy.sort((a, b) => price(a) - price(b));
+    case "date_desc":
+      return copy.sort((a, b) => time(b) - time(a));
+    case "date_asc":
+      return copy.sort((a, b) => time(a) - time(b));
+    default:
+      return copy;
+  }
+}
+
+function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) => void }) {
+  const [open, setOpen] = useState(false);
+  const active = value !== "default";
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
+          active ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500 hover:bg-slate-50"
+        }`}
+      >
+        <ArrowDownUp className="h-3.5 w-3.5" />
+        Sort
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+            {SORT_OPTIONS.map((opt) => (
+              <button
+                key={opt.key}
+                onClick={() => {
+                  onChange(opt.key);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50"
+              >
+                {opt.label}
+                {value === opt.key && <Check className="h-3.5 w-3.5 text-blue-600" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export function Column({
   title,
@@ -12,25 +87,29 @@ export function Column({
   invoices: InvoiceSummary[];
   onSelect: (id: number) => void;
 }) {
+  const [sort, setSort] = useState<SortKey>("default");
+  const sorted = useMemo(() => sortInvoices(invoices, sort), [invoices, sort]);
+
   return (
     <div className="flex-1 min-w-[280px]">
       <div className="mb-3 flex items-center gap-2">
         <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          {title}
-        </h2>
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
           {invoices.length}
         </span>
+        <div className="ml-auto">
+          <SortMenu value={sort} onChange={setSort} />
+        </div>
       </div>
 
       <div className="flex flex-col gap-3">
-        {invoices.length === 0 && (
+        {sorted.length === 0 && (
           <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400">
             No invoices
           </div>
         )}
-        {invoices.map((inv) => (
+        {sorted.map((inv) => (
           <InvoiceCard key={inv.id} invoice={inv} onClick={() => onSelect(inv.id)} />
         ))}
       </div>

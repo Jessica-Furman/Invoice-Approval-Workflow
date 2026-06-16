@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   FileText,
   Flag,
@@ -5,16 +6,17 @@ import {
   CheckCircle2,
   Settings,
 } from "lucide-react";
-import { Dashboard } from "./pages/Dashboard";
+import { Dashboard, type View } from "./pages/Dashboard";
 
-const navItems = [
-  { label: "Dashboard", icon: LayoutGrid, active: true },
-  { label: "Flagged Invoices", icon: Flag, active: false },
-  { label: "Matched Invoices", icon: CheckCircle2, active: false },
-  { label: "All Invoices", icon: FileText, active: false },
+const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
+  { label: "Dashboard", icon: LayoutGrid, view: "dashboard" },
+  { label: "Flagged Invoices", icon: Flag, view: "flagged" },
+  { label: "Matched Invoices", icon: CheckCircle2, view: "matched" },
+  { label: "All Invoices", icon: FileText, view: "all" },
 ];
 
 export default function App() {
+  const [view, setView] = useState<View>("dashboard");
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
@@ -22,17 +24,18 @@ export default function App() {
         <div className="px-6 py-5 text-lg font-bold text-slate-900">InVoicee</div>
         <nav className="flex-1 space-y-1 px-3">
           {navItems.map((item) => (
-            <a
+            <button
               key={item.label}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${
-                item.active
+              onClick={() => setView(item.view)}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm ${
+                view === item.view
                   ? "bg-blue-50 font-medium text-blue-700"
                   : "text-slate-600 hover:bg-slate-50"
               }`}
             >
               <item.icon className="h-4 w-4" />
               {item.label}
-            </a>
+            </button>
           ))}
         </nav>
         <div className="border-t border-slate-100 p-3">
@@ -59,7 +62,7 @@ export default function App() {
           />
         </header>
         <main className="p-8">
-          <Dashboard />
+          <Dashboard view={view} />
         </main>
       </div>
     </div>

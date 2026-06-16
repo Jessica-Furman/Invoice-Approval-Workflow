@@ -64,6 +64,25 @@ class ClarityTimesheetOut(BaseModel):
     period_start: date | None = None
     period_end: date | None = None
     project_id: str | None = None
+    investment_name: str | None = None
+    investment_manager: str | None = None
+    resource_manager: str | None = None
+
+
+class ClarityEntryOut(BaseModel):
+    """A single date-level Clarity time entry — the drill-down behind a summed contractor total."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    date_worked: date | None = None
+    hours: float | None = None
+    project_id: str | None = None
+    investment_name: str | None = None
+    task_name: str | None = None
+    is_time_off: bool = False
+    is_posted: bool = True
+    included: bool = True  # counted toward the billable total (posted & not time-off)
 
 
 class ClarityProjectOut(BaseModel):
@@ -93,6 +112,7 @@ class InvoiceSummary(BaseModel):
     payment_period_end: date | None = None
     total_invoice_cost: float | None = None
     status: str
+    routed_to: str | None = None
     line_item_count: int = 0
     matched_line_count: int = 0
 
