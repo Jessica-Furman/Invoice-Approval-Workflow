@@ -20,7 +20,7 @@ export const statusLabel: Record<Status, string> = {
 };
 
 export const statusChip: Record<Status, string> = {
-  matched: "bg-blue-100 text-blue-700",
+  matched: "bg-emerald-100 text-emerald-700",
   flagged: "bg-rose-100 text-rose-700",
   needs_manual_review: "bg-amber-100 text-amber-700",
   processing_failed: "bg-slate-200 text-slate-700",

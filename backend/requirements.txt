@@ -15,8 +15,9 @@ python-dateutil==2.9.0.post0
 # Matching (M4)
 rapidfuzz==3.11.0
 
-# Invoice parsing (M3) — hybrid rules + LLM fallback
+# Invoice parsing (M3) — hybrid rules + OCR fallback (+ optional LLM)
 pdfplumber==0.11.5
+rapidocr-onnxruntime==1.2.3   # offline OCR for scanned PDFs (no system binary, no LLM)
 anthropic==0.42.0
 httpx==0.28.1
 

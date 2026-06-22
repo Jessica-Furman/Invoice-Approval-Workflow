@@ -1,20 +1,23 @@
 """Invoice + dashboard API routes."""
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import models
 from app.config import settings
 from app.db.base import get_db
 from app.services.export_excel import workbook_from_detail
+from app.services.ingestion import ingest_pdf
 from app.services.storage import LocalStorage
 from app.services.matching import ClarityIndex, _line_period, match_all, match_invoice
-from app.services.routing import route_all, route_invoice
+from app.services.routing import remove_from_inboxes, route_all, route_invoice
 from app.schemas import (
     ClarityEntryOut,
     ClarityProjectOut,
@@ -24,6 +27,8 @@ from app.schemas import (
     InvoiceSummary,
     LineItemOut,
     MismatchReason,
+    UploadResult,
+    UploadResultItem,
 )
 
 router = APIRouter(prefix="/api", tags=["invoices"])
@@ -44,6 +49,62 @@ def _summary(inv: models.Invoice) -> InvoiceSummary:
         routed_to=inv.routed_to,
         line_item_count=len(line_items),
         matched_line_count=matched,
+    )
+
+
+@router.post("/invoices/upload", response_model=UploadResult)
+async def upload_invoices(
+    files: list[UploadFile] = File(...), db: Session = Depends(get_db)
+) -> UploadResult:
+    """Upload one or more contractor invoice PDFs, then parse + match + route each.
+
+    Runs the same pipeline the CLI does (`ingest_pdf` -> `match_invoice` -> `route_invoice`),
+    so an uploaded invoice lands on the dashboard exactly like the bundled samples. The Clarity
+    index is built once and reused across the batch.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    storage = LocalStorage(settings.STORAGE_DIR)
+    index = ClarityIndex.build(db)
+    results: list[UploadResultItem] = []
+
+    for upload in files:
+        name = upload.filename or "invoice.pdf"
+        if not name.lower().endswith(".pdf"):
+            results.append(UploadResultItem(filename=name, ok=False, error="Not a PDF"))
+            continue
+        # Preserve the original filename in a temp dir so ingest's stem fallback (used when no
+        # invoice number is parsed) stays meaningful.
+        tmp_dir = Path(tempfile.mkdtemp(prefix="invoicee_upload_"))
+        tmp_path = tmp_dir / Path(name).name
+        try:
+            with tmp_path.open("wb") as out:
+                shutil.copyfileobj(upload.file, out)
+            inv = ingest_pdf(db, str(tmp_path), storage=storage)
+            match_invoice(db, inv, index)
+            route_invoice(db, inv)
+            db.commit()
+            db.refresh(inv)
+            results.append(
+                UploadResultItem(
+                    filename=name,
+                    ok=True,
+                    invoice_id=inv.id,
+                    invoice_number=inv.invoice_number,
+                    status=inv.status,
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — surface per-file failures, keep batch going
+            db.rollback()
+            results.append(UploadResultItem(filename=name, ok=False, error=str(e)))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return UploadResult(
+        uploaded=sum(1 for r in results if r.ok),
+        failed=sum(1 for r in results if not r.ok),
+        results=results,
     )
 
 
@@ -103,6 +164,7 @@ def line_clarity_breakdown(
             project_id=r.project_id,
             investment_name=r.investment_name,
             task_name=r.task_name,
+            time_sheet_status=r.time_sheet_status,
             is_time_off=r.is_time_off,
             is_posted=r.is_posted,
             included=bool(r.is_posted and not r.is_time_off),
@@ -158,6 +220,27 @@ def rematch(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDetail:
     route_invoice(db, inv)
     db.commit()
     return invoice_detail(invoice_id, db)
+
+
+@router.delete("/invoices/{invoice_id}")
+def delete_invoice(invoice_id: int, db: Session = Depends(get_db)) -> dict:
+    """Permanently delete an invoice: its line items, audit log, mock-inbox copies, and stored PDF.
+
+    Used by the UI's per-invoice Delete action (with a confirmation prompt). Idempotent enough that a
+    missing invoice returns 404; everything tied to the invoice is removed so it disappears from the board.
+    """
+    inv = db.get(models.Invoice, invoice_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    key = inv.pdf_storage_key
+    remove_from_inboxes(inv)                      # mock Outlook inboxes (matched/flagged)
+    if key:
+        LocalStorage(settings.STORAGE_DIR).delete(key)  # mock S3
+    db.execute(delete(models.AuditLog).where(models.AuditLog.invoice_id == invoice_id))
+    db.delete(inv)                                # cascades line items
+    db.commit()
+    return {"deleted": invoice_id, "invoice_number": inv.invoice_number}
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceDetail)

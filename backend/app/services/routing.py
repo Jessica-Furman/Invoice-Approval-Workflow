@@ -52,6 +52,20 @@ def route_invoice(db: Session, invoice: models.Invoice, storage: LocalStorage | 
     return label
 
 
+def remove_from_inboxes(invoice: models.Invoice) -> list[str]:
+    """Delete the invoice's PDF from both mock inboxes (matched & flagged). Returns removed paths."""
+    key = invoice.pdf_storage_key
+    if not key:
+        return []
+    removed: list[str] = []
+    for d in (settings.INBOX_MATCHED_DIR, settings.INBOX_FLAGGED_DIR):
+        p = Path(d) / key
+        if p.exists():
+            p.unlink()
+            removed.append(str(p))
+    return removed
+
+
 def route_all(db: Session) -> dict:
     counts = {ROUTE_MATCHED: 0, ROUTE_FLAGGED: 0}
     for inv in db.scalars(select(models.Invoice)).all():

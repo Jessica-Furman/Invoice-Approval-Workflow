@@ -27,9 +27,9 @@ export function ClarityBar() {
   });
 
   return (
-    <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 border-l-4 border-l-brand-lime bg-white px-4 py-3">
       <div className="flex items-center gap-2 text-sm text-slate-600">
-        <Database className="h-4 w-4 text-slate-400" />
+        <Database className="h-4 w-4 text-brand-limedark" />
         <span className="font-medium text-slate-700">Clarity data</span>
         {summary ? (
           <span className="text-slate-500">

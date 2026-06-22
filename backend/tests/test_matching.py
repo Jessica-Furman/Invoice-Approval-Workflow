@@ -95,6 +95,34 @@ def test_crossref_resolves_name_variant(db: Session):
     assert li.diff["match_method"] == "crossref"
 
 
+def test_pending_posting_reason_when_time_not_posted(db: Session):
+    # In-period: 24h posted + 48h submitted (not posted). Invoice bills 72h.
+    _ts(db, "Jane Doe", 24, worked=date(2026, 5, 2), posted=True)
+    _ts(db, "Jane Doe", 48, worked=date(2026, 5, 9), posted=False)  # submitted, awaiting posting
+    db.commit()
+    inv = _invoice(db, [("Jane Doe", 72)])
+    match_invoice(db, inv, ClarityIndex.build(db))
+    db.commit()
+    li = inv.line_items[0]
+    assert li.line_status == models.STATUS_FLAGGED
+    assert li.diff["clarity_hours"] == 24.0
+    assert li.diff["clarity_pending_hours"] == 48.0
+    assert li.diff["pending_posting"] is True
+    assert "awaiting posting" in inv.mismatch_reasons[0]["reason"]
+
+
+def test_real_discrepancy_not_flagged_as_pending(db: Session):
+    # Posted 50, no pending; invoice bills 120 -> a genuine discrepancy, not a posting-timing issue.
+    _ts(db, "Jane Doe", 50, posted=True)
+    db.commit()
+    inv = _invoice(db, [("Jane Doe", 120)])
+    match_invoice(db, inv, ClarityIndex.build(db))
+    db.commit()
+    li = inv.line_items[0]
+    assert li.diff["pending_posting"] is False
+    assert "awaiting posting" not in inv.mismatch_reasons[0]["reason"]
+
+
 def test_time_off_posted_and_date_filters(db: Session):
     # Billable in-period: 60 + 20 = 80. Excluded: time-off (8), non-posted (10), out-of-period (40).
     _ts(db, "Jane Doe", 60, worked=date(2026, 5, 1))
@@ -143,3 +171,29 @@ def test_near_miss_uses_fuzzy_not_no_match(db: Session):
     li = inv.line_items[0]
     assert li.diff["match_method"] == "fuzzy"
     assert li.line_status == models.STATUS_MATCHED
+
+
+def test_fuzzy_resolves_partial_and_variant_names(db: Session):
+    # Real AVASOFT cases: invoice carries a shortened / concatenated / split name; Clarity has the
+    # full name. These must resolve via fuzzy (shared name component) instead of flagging.
+    _ts(db, "Azarudeen Shariff", 160)            # invoice has only the first name
+    _ts(db, "Sreenithi Saravana Perumal", 160)   # invoice concatenates "SaravanaPerumal"
+    _ts(db, "Srisoorya Sivakumar", 160)          # invoice splits + drops surname -> "Sri Soorya"
+    db.commit()
+    for invoice_name in ("Azarudeen", "Sreenithi SaravanaPerumal", "Sri Soorya"):
+        inv = _invoice(db, [(invoice_name, 160)])
+        match_invoice(db, inv, ClarityIndex.build(db))
+        db.commit()
+        li = inv.line_items[0]
+        assert li.line_status == models.STATUS_MATCHED, invoice_name
+        assert li.diff["match_method"] == "fuzzy", invoice_name
+
+
+def test_unrelated_name_does_not_fuzzy_match(db: Session):
+    # A name not in Clarity must NOT be force-matched to a coincidental near-name.
+    _ts(db, "Jon Nelson", 100)
+    db.commit()
+    inv = _invoice(db, [("Michael Johnson", 100)])
+    match_invoice(db, inv, ClarityIndex.build(db))
+    db.commit()
+    assert inv.line_items[0].diff["match_method"] == "unresolved"

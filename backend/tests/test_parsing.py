@@ -10,9 +10,60 @@ from pathlib import Path
 import pytest
 
 from app.services.parsing import parse_invoice
-from app.services.parsing.rules import clean_number
+from app.services.parsing.rules import clean_number, extract_person_name, _month_of_period
+
+
+def test_invoice_for_the_month_of_period():
+    # "Invoice for the month of <Month> <Year>" -> the full calendar month, even with no spaces
+    # (pdfplumber concatenates words on some vendor PDFs, e.g. Coforge).
+    assert _month_of_period("Invoice for the month of April 2026") == "4/1/2026 - 4/30/2026"
+    assert _month_of_period("InvoiceforthemonthofApril2026") == "4/1/2026 - 4/30/2026"
+    assert _month_of_period("for the month of Dec 2025") == "12/1/2025 - 12/31/2025"
+    assert _month_of_period("for the month of February 2026") == "2/1/2026 - 2/28/2026"
+    assert _month_of_period("no period phrasing here") is None
 
 SAMPLES = Path(__file__).resolve().parents[2] / "contractor_invoices"
+
+
+def test_extract_person_name_from_descriptions():
+    # Name buried in a longer description line — pull out just the human name.
+    assert extract_person_name("IT consultancy and development services (Przemek Szyszka)") == "Przemek Szyszka"
+    assert extract_person_name("Software development services - John Smith") == "John Smith"
+    assert extract_person_name("Consulting services provided by Maria Lopez") == "Maria Lopez"
+    assert extract_person_name("Contractor: David Chen") == "David Chen"
+    assert extract_person_name("Professional services for Jane Miller, May 2026") == "Jane Miller"
+    # Parentheses win, across a line break, with diacritics.
+    assert extract_person_name("IT consultancy and development\nservices (Paweł Cyło)") == "Paweł Cyło"
+    assert extract_person_name("Quality Assurance Service\n(Sebastian Wcisło)") == "Sebastian Wcisło"
+    # Already-clean names (incl. middle initial, 4-token, nobiliary particle) pass through unchanged.
+    assert extract_person_name("Noorul Sarfaraz 04/26/2026 - 05/30/2026") == "Noorul Sarfaraz"
+    assert extract_person_name("Sachin R Gangolli") == "Sachin R Gangolli"
+    assert extract_person_name("Durga Rupa Sree Tamarala") == "Durga Rupa Sree Tamarala"
+    assert extract_person_name("Maria de Souza") == "Maria de Souza"
+    # No human name present → None (caller flags for review).
+    assert extract_person_name("Professional services rendered") is None
+    assert extract_person_name("IT consultancy and development services") is None
+    assert extract_person_name("") is None
+
+
+def test_extract_person_name_after_project_and_dates():
+    # AVASOFT/Coforge shape: project label + date range first, contractor name after, role last.
+    assert (
+        extract_person_name("Mobile App Development - 01-Apr to 30-Apr 2026 -\nSharan Manivannan - Lead")
+        == "Sharan Manivannan"
+    )
+    assert (
+        extract_person_name("Mobile App Development - 01-Apr to 30-Apr 2026 -\nBibin Roy Lead")
+        == "Bibin Roy"
+    )
+    assert (
+        extract_person_name(
+            "Mobile App Development - 01-Apr to 30-Apr 2026 -\nDhinakaran Gnana Sambandam - Developer"
+        )
+        == "Dhinakaran Gnana Sambandam"
+    )
+    # Name still found when it comes BEFORE the date (must not regress).
+    assert extract_person_name("Noorul Sarfaraz 04/26/2026 - 05/30/2026") == "Noorul Sarfaraz"
 
 
 def test_clean_number_recovers_mangled_values():
@@ -50,11 +101,40 @@ def test_cigniti_recovers_46_line_items_with_clean_numbers():
     assert rajesh.rate == 83.0 and rajesh.amount == 15936.0
 
 
-@pytest.mark.skipif(not (SAMPLES / "invoice3.pdf").exists(), reason="sample PDFs not present")
-def test_scanned_invoice_flags_for_vision():
-    out = parse_invoice(str(SAMPLES / "invoice3.pdf"))
-    assert out.has_text is False
-    assert out.confidence == 0.0
-    assert set(out.missing_required()) == {
-        "vendor_name", "invoice_number", "date_received", "total_invoice_cost"
-    }
+def test_parse_from_ocr_text_blocks():
+    """OCR returns each table cell on its own line; the block parser reconstructs line items."""
+    import textwrap
+
+    from app.services.parsing.rules import parse_from_text
+
+    ocr_text = textwrap.dedent(
+        """\
+        INVOICE
+        Healy Consulting LLC
+        Invoice Number
+        INV-0137
+        Contact: Joe Healy
+        Description
+        Quantity
+        Unit Price
+        Amount USD
+        4/27/26-5/3/26-Unified Customer Profile Project
+        40.00
+        175.00
+        7,000.00
+        5/4/26-5/10/26-Unified Customer Profile Project
+        32.00
+        175.00
+        5,600.00
+        TOTAL USD
+        12,600.00
+        """
+    )
+    r = parse_from_text(ocr_text)
+    p = r.parsed
+    assert p.vendor_name == "Healy Consulting LLC"
+    assert p.invoice_number == "INV-0137"
+    assert p.contractor_name == "Joe Healy"
+    assert len(p.line_items) == 2
+    assert p.line_items[0].hours == 40.0 and p.line_items[0].rate == 175.0
+    assert p.total_invoice_cost == 12600.0

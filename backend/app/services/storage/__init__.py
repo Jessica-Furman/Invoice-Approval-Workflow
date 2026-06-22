@@ -13,6 +13,7 @@ class StorageBackend(Protocol):
     def put_file(self, src_path: str, key: str | None = None) -> str: ...
     def path_for(self, key: str) -> str: ...
     def exists(self, key: str) -> bool: ...
+    def delete(self, key: str) -> bool: ...
 
 
 class LocalStorage:
@@ -34,3 +35,11 @@ class LocalStorage:
 
     def exists(self, key: str) -> bool:
         return (self.base / key).exists()
+
+    def delete(self, key: str) -> bool:
+        """Remove the stored object. Returns True if a file was removed."""
+        dest = self.base / key
+        if dest.exists():
+            dest.unlink()
+            return True
+        return False

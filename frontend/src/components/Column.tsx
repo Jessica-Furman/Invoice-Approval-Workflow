@@ -1,7 +1,34 @@
 import { useMemo, useState } from "react";
-import { ArrowDownUp, Check } from "lucide-react";
+import { ArrowDownUp, Check, CheckCircle2, Flag, FolderOpen } from "lucide-react";
 import type { InvoiceSummary } from "../api/client";
 import { InvoiceCard } from "./InvoiceCard";
+
+export type ColumnVariant = "flagged" | "matched" | "all";
+
+/** Per-column header: just an icon + bold colored label (no box). */
+const VARIANTS: Record<
+  ColumnVariant,
+  { label: string; icon: typeof Flag; text: string; iconClass: string }
+> = {
+  flagged: {
+    label: "Flagged",
+    icon: Flag,
+    text: "text-rose-600",
+    iconClass: "h-4 w-4 fill-rose-500 text-rose-600",
+  },
+  matched: {
+    label: "Matched",
+    icon: CheckCircle2,
+    text: "text-emerald-600",
+    iconClass: "h-4 w-4 text-emerald-600",
+  },
+  all: {
+    label: "All",
+    icon: FolderOpen,
+    text: "text-slate-500",
+    iconClass: "h-4 w-4 text-slate-500",
+  },
+};
 
 type SortKey =
   | "default"
@@ -46,7 +73,7 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) 
       <button
         onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-          active ? "border-blue-300 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-500 hover:bg-slate-50"
+          active ? "border-brand-lime bg-lime-50 text-brand-limedark" : "border-slate-200 text-slate-500 hover:bg-slate-50"
         }`}
       >
         <ArrowDownUp className="h-3.5 w-3.5" />
@@ -66,7 +93,7 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) 
                 className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50"
               >
                 {opt.label}
-                {value === opt.key && <Check className="h-3.5 w-3.5 text-blue-600" />}
+                {value === opt.key && <Check className="h-3.5 w-3.5 text-brand-limedark" />}
               </button>
             ))}
           </div>
@@ -77,25 +104,25 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) 
 }
 
 export function Column({
-  title,
-  dotClass,
+  variant,
   invoices,
   onSelect,
 }: {
-  title: string;
-  dotClass: string;
+  variant: ColumnVariant;
   invoices: InvoiceSummary[];
   onSelect: (id: number) => void;
 }) {
   const [sort, setSort] = useState<SortKey>("default");
   const sorted = useMemo(() => sortInvoices(invoices, sort), [invoices, sort]);
+  const cfg = VARIANTS[variant];
+  const Icon = cfg.icon;
 
   return (
     <div className="flex-1 min-w-[280px]">
       <div className="mb-3 flex items-center gap-2">
-        <span className={`h-2 w-2 rounded-full ${dotClass}`} />
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+        <Icon className={cfg.iconClass} />
+        <h2 className={`text-sm font-bold uppercase tracking-wide ${cfg.text}`}>{cfg.label}</h2>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
           {invoices.length}
         </span>
         <div className="ml-auto">

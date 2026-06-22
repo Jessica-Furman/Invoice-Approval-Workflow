@@ -1,7 +1,19 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ChevronDown, ChevronRight, FileText, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  FileText,
+  FileWarning,
+  Trash2,
+  UserX,
+  X,
+} from "lucide-react";
+import {
+  deleteInvoice,
   fetchClarityEntries,
   fetchInvoice,
   invoiceExcelUrl,
@@ -21,6 +33,52 @@ function num(v: unknown): number | null {
 }
 function str(v: unknown): string | null {
   return typeof v === "string" ? v : null;
+}
+
+type MismatchReasonT = InvoiceDetailT["mismatch_reasons"][number];
+
+/** Icon + label for a mismatch field ("hours" -> Clock "Hours mismatch", etc.). */
+function fieldMeta(field: string): { Icon: typeof Clock; label: string } {
+  const f = field.toLowerCase();
+  if (f.includes("hour")) return { Icon: Clock, label: "Hours mismatch" };
+  if (f.includes("name")) return { Icon: UserX, label: "Contractor not found" };
+  if (f.includes("document") || f.includes("parse")) return { Icon: FileWarning, label: "Document issue" };
+  return { Icon: AlertTriangle, label: field };
+}
+
+/** Pull the contractor name out of a reason sentence so it can be shown as a clear "Who". */
+function whoFromReason(r: MismatchReasonT): string | null {
+  if (r.field.toLowerCase().includes("name") && r.invoice_value) return r.invoice_value;
+  const m =
+    r.reason.match(/(?:for|hours for)\s+([A-Z][^(.,:]+?)(?:\s*\(|\.|,|:|$)/) ||
+    r.reason.match(/^([A-Z][^(.,:]+?):/);
+  return m ? m[1].trim() : null;
+}
+
+/** One compact issue row: icon · Who + field · invoice→clarity values · muted reason. */
+function MismatchRow({ r }: { r: MismatchReasonT }) {
+  const { Icon, label } = fieldMeta(r.field);
+  const who = whoFromReason(r);
+  const hasValues = r.invoice_value != null || r.clarity_value != null;
+  return (
+    <div className="flex items-start gap-2.5 px-3 py-2.5">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-sm font-semibold text-slate-800">{who ?? label}</span>
+          <span className="shrink-0 text-[11px] uppercase tracking-wide text-slate-400">{label}</span>
+          {hasValues && (
+            <span className="ml-auto shrink-0 font-mono text-xs text-slate-500">
+              <span className="text-slate-700">{r.invoice_value ?? "—"}</span>
+              <span className="mx-1 text-slate-300">→</span>
+              <span className="text-slate-700">{r.clarity_value ?? "—"}</span>
+            </span>
+          )}
+        </div>
+        <p className="mt-0.5 text-xs leading-snug text-slate-500">{r.reason}</p>
+      </div>
+    </div>
+  );
 }
 
 /** Date-level breakdown shown when a Clarity contractor row is expanded. */
@@ -61,7 +119,9 @@ function ClarityBreakdown({ invoiceId, lineId }: { invoiceId: number; lineId: nu
               <td className="py-1">{e.investment_name ?? e.project_id ?? "—"}</td>
               <td className="py-1">{e.task_name ?? "—"}</td>
               <td className="py-1">
-                {e.is_time_off ? "Time off" : !e.is_posted ? e.task_name && "Not posted" : "Posted"}
+                {e.is_time_off
+                  ? "Time off"
+                  : e.time_sheet_status ?? (e.is_posted ? "Posted" : "Not posted")}
                 {!e.included && (
                   <span className="ml-1 rounded bg-slate-200 px-1 text-[10px] text-slate-600 no-underline">
                     excluded
@@ -214,9 +274,19 @@ function ProjectTable({ rows }: { rows: ClarityProject[] }) {
 }
 
 export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["invoice", id],
     queryFn: () => fetchInvoice(id),
+  });
+
+  const del = useMutation({
+    mutationFn: () => deleteInvoice(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      onClose();
+    },
   });
 
   return (
@@ -275,17 +345,23 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
               )}
             </div>
 
-            {/* Mismatch reasons */}
+            {/* Mismatch reasons — compact, professional list */}
             {data.mismatch_reasons.length > 0 && (
-              <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-4">
-                <h3 className="mb-2 text-sm font-semibold text-rose-700">What didn’t match</h3>
-                <ul className="space-y-1 text-sm text-rose-700">
+              <div className="mb-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
+                  <AlertTriangle className="h-4 w-4 text-rose-500" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    What didn’t match
+                  </span>
+                  <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                    {data.mismatch_reasons.length}
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-100">
                   {data.mismatch_reasons.map((m, i) => (
-                    <li key={i}>
-                      <span className="font-medium capitalize">{m.field}:</span> {m.reason}
-                    </li>
+                    <MismatchRow key={i} r={m} />
                   ))}
-                </ul>
+                </div>
               </div>
             )}
 
@@ -308,23 +384,60 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
             </div>
 
             {/* Actions */}
-            <div className="mt-8 flex justify-end gap-3">
-              <a
-                href={invoiceExcelUrl(data.id)}
-                className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
-              >
-                Export to Excel
-              </a>
-              {data.status === "matched" ? (
-                <button className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-                  Approved, create CSV
-                </button>
+            <div className="mt-8 flex items-center justify-between gap-3">
+              {confirmingDelete ? (
+                <div className="flex items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+                  <span className="text-sm text-rose-700">
+                    Delete this invoice? This can’t be undone.
+                  </span>
+                  <button
+                    onClick={() => del.mutate()}
+                    disabled={del.isPending}
+                    className="rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-60"
+                  >
+                    {del.isPending ? "Deleting…" : "Yes, delete"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmingDelete(false)}
+                    disabled={del.isPending}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
               ) : (
-                <button className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900">
-                  Mark as Matched
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-rose-300 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Invoice
                 </button>
               )}
+
+              <div className="flex gap-3">
+                <a
+                  href={invoiceExcelUrl(data.id)}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                >
+                  Export to Excel
+                </a>
+                {data.status === "matched" ? (
+                  <button className="rounded-lg bg-brand-lime px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm hover:bg-brand-limedark">
+                    Approved, create CSV
+                  </button>
+                ) : (
+                  <button className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900">
+                    Mark as Matched
+                  </button>
+                )}
+              </div>
             </div>
+            {del.isError && (
+              <div className="mt-3 text-right text-sm text-rose-600">
+                Couldn’t delete the invoice. Is the backend running?
+              </div>
+            )}
           </div>
         )}
       </div>

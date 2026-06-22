@@ -3,7 +3,7 @@ import type { InvoiceSummary } from "../api/client";
 import { date, money, statusChip, statusLabel } from "../lib/format";
 
 const actionIcon: Record<string, JSX.Element> = {
-  matched: <Check className="h-4 w-4 text-blue-600" />,
+  matched: <Check className="h-4 w-4 text-emerald-600" />,
   flagged: <ArrowRight className="h-4 w-4 text-slate-500" />,
   needs_manual_review: <ArrowRight className="h-4 w-4 text-slate-500" />,
   processing_failed: <Eye className="h-4 w-4 text-slate-500" />,
@@ -19,7 +19,7 @@ export function InvoiceCard({
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:shadow-md hover:border-slate-300"
+      className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-lime hover:shadow-md"
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-400">

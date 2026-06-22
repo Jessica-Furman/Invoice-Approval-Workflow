@@ -69,15 +69,19 @@ def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) 
     inv.vendor_name = p.vendor_name
     inv.invoice_number = p.invoice_number or Path(pdf_path).stem
     inv.date_received = p.date_received
-    period_start, period_end = parse_period(p.payment_period)
-    # Fall back to the line items' own periods (e.g. TCS lists From/To per line).
-    if period_start is None or period_end is None:
-        starts = [date.fromisoformat(li.extra["period_start"]) for li in p.line_items
-                  if li.extra and li.extra.get("period_start")]
-        ends = [date.fromisoformat(li.extra["period_end"]) for li in p.line_items
-                if li.extra and li.extra.get("period_end")]
-        period_start = period_start or (min(starts) if starts else None)
-        period_end = period_end or (max(ends) if ends else None)
+    # Period priority: a labeled "Period:" header is authoritative (handles invoices whose per-line
+    # dates have typos); otherwise use the full span of the line-item periods (handles invoices like
+    # the scanned Healy one where the header has no period); otherwise an unlabeled header range.
+    line_starts = [date.fromisoformat(li.extra["period_start"]) for li in p.line_items
+                   if li.extra and li.extra.get("period_start")]
+    line_ends = [date.fromisoformat(li.extra["period_end"]) for li in p.line_items
+                 if li.extra and li.extra.get("period_end")]
+    if p.payment_period_labeled:
+        period_start, period_end = parse_period(p.payment_period)
+    elif line_starts and line_ends:
+        period_start, period_end = min(line_starts), max(line_ends)
+    else:
+        period_start, period_end = parse_period(p.payment_period)
     inv.payment_period_start, inv.payment_period_end = period_start, period_end
     inv.total_invoice_cost = p.total_invoice_cost
     inv.status = status

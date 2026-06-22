@@ -57,6 +57,11 @@ def main() -> None:
             print(f"   {os.path.basename(pdf)} -> invoice {inv.id} "
                   f"({inv.invoice_number}, {len(inv.line_items)} lines, {inv.status})")
 
+        print("3b) Seeding confirmed name cross-references ...")
+        from app.services.name_crossref_seed import seed_name_crossrefs
+
+        print(f"   crossrefs added: {seed_name_crossrefs(db)}")
+
         print("4) Matching invoices against Clarity ...")
         from app.services.matching import match_all
 

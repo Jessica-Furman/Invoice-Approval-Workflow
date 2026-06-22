@@ -99,6 +99,11 @@ export async function fetchInvoice(id: number): Promise<InvoiceDetail> {
   return data;
 }
 
+export async function deleteInvoice(id: number): Promise<{ deleted: number }> {
+  const { data } = await api.delete<{ deleted: number }>(`/api/invoices/${id}`);
+  return data;
+}
+
 export interface ClarityEntry {
   id: number;
   date_worked: string | null;
@@ -106,6 +111,7 @@ export interface ClarityEntry {
   project_id: string | null;
   investment_name: string | null;
   task_name: string | null;
+  time_sheet_status: string | null;
   is_time_off: boolean;
   is_posted: boolean;
   included: boolean;
@@ -140,6 +146,30 @@ export interface ClarityImportResult {
   timesheets_updated: number;
   projects_created: number;
   warnings: string[];
+}
+
+export interface UploadResultItem {
+  filename: string;
+  ok: boolean;
+  invoice_id: number | null;
+  invoice_number: string | null;
+  status: Status | null;
+  error: string | null;
+}
+
+export interface UploadResult {
+  uploaded: number;
+  failed: number;
+  results: UploadResultItem[];
+}
+
+export async function uploadInvoices(files: File[]): Promise<UploadResult> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const { data } = await api.post<UploadResult>("/api/invoices/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
 }
 
 export async function importClarity(file: File): Promise<ClarityImportResult> {

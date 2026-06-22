@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.schemas import ParsedInvoice
-from app.services.parsing import llm, rules
+from app.services.parsing import llm, ocr, rules
 
 # Below this rules-confidence, try the LLM (if a key is configured).
 CONFIDENCE_THRESHOLD = 0.8
@@ -51,8 +51,20 @@ def parse_invoice(pdf_path: str, *, allow_llm: bool = True) -> ParseOutcome:
     r = rules.parse_with_rules(pdf_path)
     warnings = list(r.warnings)
 
+    # Scanned PDF (no embedded text): try OCR before anything else (no LLM needed).
+    if not r.has_text and ocr.is_available():
+        try:
+            text = ocr.ocr_pdf(pdf_path)
+            if text.strip():
+                r = rules.parse_from_text(text)
+                warnings = list(r.warnings)
+                if not _needs_llm(r) or not (allow_llm and llm.is_available()):
+                    return ParseOutcome(r.parsed, r.confidence, "ocr", True, warnings)
+        except Exception as e:
+            warnings.append(f"OCR failed: {e}")
+
     if not (_needs_llm(r) and allow_llm and llm.is_available()):
-        return ParseOutcome(r.parsed, r.confidence, "rules", r.has_text, warnings)
+        return ParseOutcome(r.parsed, r.confidence, "ocr" if not r.has_text else "rules", r.has_text, warnings)
 
     try:
         llm_parsed = llm.parse_with_llm(pdf_path)

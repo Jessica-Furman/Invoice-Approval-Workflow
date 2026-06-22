@@ -19,34 +19,44 @@ export default function App() {
   const [view, setView] = useState<View>("dashboard");
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar */}
-      <aside className="flex w-60 flex-col border-r border-slate-200 bg-white">
-        <div className="px-6 py-5 text-lg font-bold text-slate-900">InVoicee</div>
-        <nav className="flex-1 space-y-1 px-3">
-          {navItems.map((item) => (
-            <button
-              key={item.label}
-              onClick={() => setView(item.view)}
-              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm ${
-                view === item.view
-                  ? "bg-blue-50 font-medium text-blue-700"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </button>
-          ))}
+      {/* Sidebar — Upbound near-black with lime accents */}
+      <aside className="flex w-60 flex-col bg-brand-inkdark">
+        <div className="flex items-center gap-2 px-6 py-6">
+          <span className="text-2xl font-extrabold tracking-tight text-white">
+            InVoic<span className="text-brand-lime">ee</span>
+          </span>
+          <span className="h-2 w-2 rounded-full bg-brand-lime shadow-[0_0_12px_3px_rgba(164,214,30,0.8)]" />
+        </div>
+        <nav className="flex-1 space-y-1.5 px-3">
+          {navItems.map((item) => {
+            const active = view === item.view;
+            return (
+              <button
+                key={item.label}
+                onClick={() => setView(item.view)}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
+                  active
+                    ? "bg-brand-lime font-semibold text-brand-inkdark shadow-[0_0_16px_rgba(164,214,30,0.45)]"
+                    : "text-slate-200 hover:bg-white/10 hover:text-brand-lime"
+                }`}
+              >
+                <item.icon className="h-[18px] w-[18px]" />
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
-        <div className="border-t border-slate-100 p-3">
-          <a className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
+        <div className="border-t border-white/10 p-3">
+          <a className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-white/10 hover:text-brand-lime">
             <Settings className="h-4 w-4" />
             Settings
           </a>
           <div className="mt-2 flex items-center gap-3 px-3 py-2">
-            <div className="h-8 w-8 rounded-full bg-slate-200" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-lime text-sm font-bold text-brand-inkdark">
+              IP
+            </div>
             <div className="text-xs">
-              <div className="font-medium text-slate-700">Invoice Processor</div>
+              <div className="font-medium text-white">Invoice Processor</div>
               <div className="text-slate-400">Accounts Payable</div>
             </div>
           </div>
@@ -54,11 +64,11 @@ export default function App() {
       </aside>
 
       {/* Main */}
-      <div className="flex-1">
+      <div className="flex-1 bg-slate-50">
         <header className="flex items-center gap-4 border-b border-slate-200 bg-white px-8 py-3">
           <input
             placeholder="Search invoices, vendors, or IDs…"
-            className="w-full max-w-xl rounded-lg border border-slate-200 px-4 py-2 text-sm focus:border-blue-400 focus:outline-none"
+            className="w-full max-w-xl rounded-lg border border-slate-200 px-4 py-2 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none"
           />
         </header>
         <main className="p-8">

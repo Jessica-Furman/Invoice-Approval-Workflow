@@ -25,6 +25,7 @@ class ParsedInvoice(BaseModel):
     invoice_number: str | None = None
     date_received: date | None = None
     payment_period: str | None = None
+    payment_period_labeled: bool = False  # True if found next to a "Period:" label (authoritative)
     hourly_or_fixed_rate: float | None = None
     hours_worked: float | None = None
     total_invoice_cost: float | None = None
@@ -80,6 +81,7 @@ class ClarityEntryOut(BaseModel):
     project_id: str | None = None
     investment_name: str | None = None
     task_name: str | None = None
+    time_sheet_status: str | None = None  # raw Clarity status: Posted / Submitted / Open / Approved / …
     is_time_off: bool = False
     is_posted: bool = True
     included: bool = True  # counted toward the billable total (posted & not time-off)
@@ -133,3 +135,20 @@ class DashboardResponse(BaseModel):
     flagged: list[InvoiceSummary] = []
     matched: list[InvoiceSummary] = []
     all: list[InvoiceSummary] = []
+
+
+class UploadResultItem(BaseModel):
+    """Per-file outcome of an invoice upload batch."""
+
+    filename: str
+    ok: bool
+    invoice_id: int | None = None
+    invoice_number: str | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class UploadResult(BaseModel):
+    uploaded: int = 0
+    failed: int = 0
+    results: list[UploadResultItem] = []
