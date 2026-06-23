@@ -10,7 +10,34 @@ from pathlib import Path
 import pytest
 
 from app.services.parsing import parse_invoice
-from app.services.parsing.rules import clean_number, extract_person_name, _month_of_period
+from app.services.parsing.rules import (
+    clean_number,
+    extract_person_name,
+    parse_services_rendered,
+    _month_of_period,
+)
+
+
+def test_parse_services_rendered_multi_contractor():
+    # Gravity IT format: pdfplumber crams several "Services Rendered for:" contractors into one row
+    # as newline-joined cells. Each must be split out into its own line item.
+    table = [
+        ["Date Ending", "Description", "Quantity", "Rate", "Amount"],
+        [
+            "06/05/2026\n06/05/2026\n06/05/2026",
+            "Services Rendered for: Amruthaj, Peter - Product\nManager\nPO Number:\n"
+            "Services Rendered for: Huffaker, Ben - Product Owner\nPO Number:\n"
+            "Services Rendered for: Osei, Prince - Mobile\nDevelopment Team Lead\nPO Number:",
+            "40\n40\n40",
+            "$95.00\n$88.00\n$120.00",
+            "$3,800.00\n$3,520.00\n$4,800.00",
+        ],
+    ]
+    items = parse_services_rendered([table])
+    assert [li.contractor_name for li in items] == ["Amruthaj Peter", "Huffaker Ben", "Osei Prince"]
+    assert [li.hours for li in items] == [40.0, 40.0, 40.0]
+    assert [li.rate for li in items] == [95.0, 88.0, 120.0]
+    assert items[2].amount == 4800.0
 
 
 def test_invoice_for_the_month_of_period():
@@ -71,6 +98,10 @@ def test_clean_number_recovers_mangled_values():
     assert clean_number("8 3.00") == 83.0           # CIGNITI rate split by stray space
     assert clean_number("1 5,936.00") == 15936.0    # CIGNITI amount split by stray space
     assert clean_number("180 Hrs") == 180.0         # TCS units cell
+    assert clean_number("90 400,00") == 90400.0      # Ironin EU: space=thousands, comma=decimal
+    assert clean_number("90 400,00 USD") == 90400.0
+    assert clean_number("1.234,56") == 1234.56       # EU: dot=thousands, comma=decimal
+    assert clean_number("0,00") == 0.0
     assert clean_number("") is None
     assert clean_number(None) is None
 

@@ -152,7 +152,7 @@ def _clarity_hours_for(
     rows: list[models.ClarityTimesheet], inv_start: date | None, inv_end: date | None
 ) -> ClarityHours:
     """Sum billable Clarity hours for the contractor:
-    - only POSTED timesheets,
+    - only POSTED timesheets (Time Sheet Status == "Posted"),
     - EXCLUDING time-off entries (Time Off / PTO / timeoff), and
     - restricted to entries whose Date Worked falls within the invoice period (when known).
 
@@ -225,14 +225,17 @@ def match_invoice(db: Session, invoice: models.Invoice, index: ClarityIndex) -> 
         # Use the invoice-level period (per-line week dates on these split invoices can be unreliable).
         ch = _clarity_hours_for(rows, invoice.payment_period_start, invoice.payment_period_end)
         clarity_hours, used_rows = ch.posted, ch.rows
-        clarity_name = used_rows[0].contractor_name if used_rows else None
+        # Link to a posted row if any, else any row of the resolved contractor — so the UI drill-down
+        # can still show this person's entries (e.g. submitted-but-not-posted) when 0 posted hours.
+        link_row = used_rows[0] if used_rows else (rows[0] if rows else None)
+        clarity_name = link_row.contractor_name if link_row else None
         inv_total = sum((li.hours or 0) for li in items)
         delta = inv_total - clarity_hours
         ok = abs(delta) <= max(HOURS_ABS_TOLERANCE, HOURS_PCT_TOLERANCE * inv_total)
         pending_posting = (not ok) and delta > 0 and ch.pending > 0
         status = models.STATUS_MATCHED if ok else models.STATUS_FLAGGED
         for li, _, _ in resolutions:
-            li.matched_clarity_id = used_rows[0].id if used_rows else None
+            li.matched_clarity_id = link_row.id if link_row else None
             li.line_status = status
             li.diff = {
                 "match_method": method, "clarity_name": clarity_name, "aggregated": True,
@@ -273,12 +276,15 @@ def match_invoice(db: Session, invoice: models.Invoice, index: ClarityIndex) -> 
         line_start, line_end = _line_period(li, invoice)
         ch = _clarity_hours_for(rows, line_start, line_end)
         clarity_hours, used_rows = ch.posted, ch.rows
-        li.matched_clarity_id = used_rows[0].id if used_rows else None
+        # Link to a posted row if any, else any row of the resolved contractor — so the UI drill-down
+        # still shows this person's entries (e.g. submitted-but-not-posted) when 0 posted hours.
+        link_row = used_rows[0] if used_rows else (rows[0] if rows else None)
+        li.matched_clarity_id = link_row.id if link_row else None
         inv_hours = li.hours
 
         diff = {
             "match_method": method,
-            "clarity_name": used_rows[0].contractor_name if used_rows else None,
+            "clarity_name": link_row.contractor_name if link_row else None,
             "invoice_hours": inv_hours,
             "clarity_hours": round(clarity_hours, 2),
             "clarity_pending_hours": ch.pending,

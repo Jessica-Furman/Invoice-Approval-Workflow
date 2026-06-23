@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
-import { fetchDashboard, uploadInvoices, type UploadResult } from "../api/client";
+import {
+  fetchDashboard,
+  uploadInvoices,
+  type InvoiceSummary,
+  type UploadResult,
+} from "../api/client";
 import { ClarityBar } from "../components/ClarityBar";
 import { Column } from "../components/Column";
 import { DetailDrawer } from "../components/DetailDrawer";
@@ -37,7 +42,17 @@ function ProcessingIndicator() {
   );
 }
 
-export function Dashboard({ view }: { view: View }) {
+function matchesSearch(inv: InvoiceSummary, q: string): boolean {
+  if (!q) return true;
+  return (
+    (inv.vendor_name ?? "").toLowerCase().includes(q) ||
+    (inv.invoice_number ?? "").toLowerCase().includes(q) ||
+    String(inv.id).includes(q)
+  );
+}
+
+export function Dashboard({ view, search }: { view: View; search: string }) {
+  const q = search.trim().toLowerCase();
   const [selected, setSelected] = useState<number | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -152,17 +167,37 @@ export function Dashboard({ view }: { view: View }) {
       )}
 
       {data && (
-        <div className="flex flex-wrap gap-6">
-          {(view === "dashboard" || view === "flagged") && (
-            <Column variant="flagged" invoices={data.flagged} onSelect={setSelected} />
+        <>
+          {search.trim() && (
+            <div className="mb-4 text-sm text-slate-500">
+              Showing results for{" "}
+              <span className="font-semibold text-brand-ink">“{search.trim()}”</span>
+            </div>
           )}
-          {(view === "dashboard" || view === "matched") && (
-            <Column variant="matched" invoices={data.matched} onSelect={setSelected} />
-          )}
-          {(view === "dashboard" || view === "all") && (
-            <Column variant="all" invoices={data.all} onSelect={setSelected} />
-          )}
-        </div>
+          <div className="flex flex-wrap gap-6">
+            {(view === "dashboard" || view === "flagged") && (
+              <Column
+                variant="flagged"
+                invoices={data.flagged.filter((i) => matchesSearch(i, q))}
+                onSelect={setSelected}
+              />
+            )}
+            {(view === "dashboard" || view === "matched") && (
+              <Column
+                variant="matched"
+                invoices={data.matched.filter((i) => matchesSearch(i, q))}
+                onSelect={setSelected}
+              />
+            )}
+            {(view === "dashboard" || view === "all") && (
+              <Column
+                variant="all"
+                invoices={data.all.filter((i) => matchesSearch(i, q))}
+                onSelect={setSelected}
+              />
+            )}
+          </div>
+        </>
       )}
 
       {selected !== null && (

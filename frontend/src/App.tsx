@@ -7,6 +7,7 @@ import {
   Settings,
 } from "lucide-react";
 import { Dashboard, type View } from "./pages/Dashboard";
+import { SearchBar } from "./components/SearchBar";
 
 const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
   { label: "Dashboard", icon: LayoutGrid, view: "dashboard" },
@@ -17,6 +18,7 @@ const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
+  const [search, setSearch] = useState("");
   return (
     <div className="flex min-h-screen">
       {/* Sidebar — Upbound near-black with lime accents */}
@@ -66,13 +68,10 @@ export default function App() {
       {/* Main */}
       <div className="flex-1 bg-slate-50">
         <header className="flex items-center gap-4 border-b border-slate-200 bg-white px-8 py-3">
-          <input
-            placeholder="Search invoices, vendors, or IDs…"
-            className="w-full max-w-xl rounded-lg border border-slate-200 px-4 py-2 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none"
-          />
+          <SearchBar value={search} onChange={setSearch} />
         </header>
         <main className="p-8">
-          <Dashboard view={view} />
+          <Dashboard view={view} search={search} />
         </main>
       </div>
     </div>

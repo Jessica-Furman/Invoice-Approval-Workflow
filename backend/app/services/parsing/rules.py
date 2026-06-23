@@ -31,15 +31,29 @@ class RulesResult:
 
 # --- number / date helpers -------------------------------------------------
 def clean_number(s: str | None) -> float | None:
-    """'$2,400' -> 2400.0 ; '8 3.00' -> 83.0 ; '180 Hrs' -> 180.0 ; '1 5,936.00' -> 15936.0."""
+    """Parse a money/number string, handling US and European formats.
+
+    '$2,400' -> 2400.0 ; '8 3.00' -> 83.0 ; '180 Hrs' -> 180.0 ; '1 5,936.00' -> 15936.0 ;
+    '90 400,00' -> 90400.0 (EU: space=thousands, comma=decimal) ; '1.234,56' -> 1234.56 (EU).
+    """
     if s is None:
         return None
     # keep only digits, dot, comma, spaces; drop currency/units/letters
     t = re.sub(r"[^0-9.,\s]", "", str(s)).strip()
     if not t:
         return None
-    t = t.replace(" ", "").replace(",", "")  # de-space mangled numbers, drop thousands sep
-    if t.count(".") > 1:  # e.g. stray dots — keep first
+    t = t.replace(" ", "")  # spaces are thousands separators (mangled US or EU) -> drop
+    has_comma, has_dot = "," in t, "." in t
+    if has_comma and has_dot:
+        # The last-occurring separator is the decimal point: US '1,234.56' vs EU '1.234,56'.
+        if t.rfind(",") > t.rfind("."):
+            t = t.replace(".", "").replace(",", ".")  # EU: dot=thousands, comma=decimal
+        else:
+            t = t.replace(",", "")                    # US: comma=thousands, dot=decimal
+    elif has_comma:
+        # Only a comma: treat as a decimal when it has 1-2 trailing digits ('90400,00'), else thousands.
+        t = t.replace(",", ".") if re.search(r",\d{1,2}$", t) else t.replace(",", "")
+    if t.count(".") > 1:  # stray/extra dots — keep the first as the decimal point
         head, _, tail = t.partition(".")
         t = head + "." + tail.replace(".", "")
     try:
@@ -97,6 +111,9 @@ _COMPANY_SUFFIX_RE = re.compile(
 # Leading digit required so the capture can't be just whitespace.
 _TOTAL_PATTERNS = [
     r"Total\s*Invoice\s*Value\s*:?\s*\$?\s*([0-9][0-9, ]*\.?\d*)",
+    # Ironin: "Total to be paid: 90 400,00 USD (...)" — capture the leading (USD) amount, EU-formatted.
+    r"Total\s*to\s*be\s*paid\s*:?\s*\$?\s*([0-9][0-9 .,]*)",
+    r"Gross\s*Value\s*:?\s*\$?\s*([0-9][0-9 .,]*\d)",
     r"Total\s*(?:Amount|Due)\s*(?:Due)?\s*:?\s*\$?\s*([0-9][0-9, ]*\.?\d*)",
     r"Amount\s*Due[^\$\d]*\$?\s*([0-9][0-9, ]*\.?\d*)",
     r"\bTotal\b\s*\(USD\)\s*([0-9][0-9, ]*\.?\d*)",
@@ -550,6 +567,64 @@ def extract_line_items_from_tables(tables: list[list[list[str]]]) -> tuple[list[
     return best, warnings
 
 
+# --- "Services Rendered for:" multi-contractor billing (e.g. Gravity IT Resources) ----------
+# This vendor lists each contractor as "Services Rendered for: <Last, First> - <Role>" with matching
+# Quantity/Rate/Amount, but pdfplumber crams several contractors into one row as newline-joined cells.
+_SERVICES_RENDERED_RE = re.compile(r"Services\s+Rendered\s+for:\s*(.+)", re.IGNORECASE)
+
+
+def _services_rendered_name(line: str) -> str:
+    """'Yaga, Anusha - Product Manager' -> 'Yaga, Anusha' (drop the trailing ' - <role>')."""
+    return re.split(r"\s+-\s+", line.strip(), maxsplit=1)[0].strip()
+
+
+def parse_services_rendered(tables: list[list[list[str]]]) -> list[ParsedLineItem]:
+    """Extract every "Services Rendered for: <Name>" billing line across all tables/pages.
+
+    Each column's cell may hold several values joined by newlines (one per contractor). We pull the
+    names from the description column and zip them, by index, with the Quantity/Rate/Amount columns.
+    """
+    items: list[ParsedLineItem] = []
+    for table in tables:
+        if not table or not table[0]:
+            continue
+        header = [(c or "") for c in table[0]]
+        ci_name = _match_col(header, ("description", "item"))
+        ci_hours = _match_col(header, _HOURS_KEYS)
+        ci_rate = _match_col(header, _RATE_KEYS)
+        ci_amount = _match_col(header, _AMOUNT_KEYS)
+        if ci_name is None or ci_hours is None:
+            continue
+        for row in table[1:]:
+            cells = [(c or "") for c in row]
+            desc = cells[ci_name] if ci_name < len(cells) else ""
+            if "services rendered for" not in desc.lower():
+                continue
+            names = [
+                _services_rendered_name(m.group(1))
+                for line in desc.split("\n")
+                if (m := _SERVICES_RENDERED_RE.search(line))
+            ]
+
+            def _col(ci: int | None) -> list[str]:
+                if ci is None or ci >= len(cells):
+                    return []
+                return [v.strip() for v in cells[ci].split("\n") if v.strip()]
+
+            hrs, rates, amts = _col(ci_hours), _col(ci_rate), _col(ci_amount)
+            for i, raw_name in enumerate(names):
+                name = _name_from_cell(raw_name) or raw_name
+                hours = clean_number(hrs[i]) if i < len(hrs) else None
+                rate = clean_number(rates[i]) if i < len(rates) else None
+                amount = clean_number(amts[i]) if i < len(amts) else None
+                if amount is None and hours is not None and rate is not None:
+                    amount = round(hours * rate, 2)
+                items.append(
+                    ParsedLineItem(contractor_name=name, hours=hours, rate=rate, amount=amount)
+                )
+    return items
+
+
 # --- text-layout fallback (no real table) ----------------------------------
 # Matches lines like "Hours- Cristian Vargas- $65/hr" (Global Compass style rate lists).
 _RATE_LINE_RE = re.compile(r"Hours\s*-\s*([A-Za-z][A-Za-z .'\-]+?)\s*-\s*\$\s*(\d+(?:\.\d+)?)\s*/\s*hr", re.IGNORECASE)
@@ -679,6 +754,12 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
     # Fallback for text-layout invoices (no real table) such as Global Compass's "Hours- Name- $rate/hr".
     if not items:
         items = parse_rate_list_text(text)
+    # Multi-contractor "Services Rendered for:" billing (Gravity IT) where standard table parsing only
+    # catches one row — use it when it recovers more contractors.
+    if "services rendered for" in text.lower():
+        sr_items = parse_services_rendered(tables)
+        if len(sr_items) > len(items):
+            items = sr_items
     warnings += item_warnings
 
     total = header["total_invoice_cost"]
