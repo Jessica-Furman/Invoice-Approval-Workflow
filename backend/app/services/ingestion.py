@@ -20,12 +20,16 @@ from app.utils.names import normalize_name
 
 
 def parse_period(period: str | None) -> tuple[date | None, date | None]:
-    """Split a 'start - end' / 'start to end' period string into two dates (best effort)."""
+    """Split a 'start - end' / 'start to end' period string into two dates (best effort).
+
+    The separator must be a dash/'to' surrounded by whitespace (or an en-dash), so a date that
+    itself contains hyphens (e.g. '02-Mar-2026 - 31-Mar-2026') isn't split at its internal hyphen.
+    """
     if not period:
         return None, None
     import re
 
-    parts = re.split(r"\s*(?:-|–|to)\s*", period, maxsplit=1, flags=re.IGNORECASE)
+    parts = re.split(r"\s+-\s+|\s*–\s*|\s+to\s+", period, maxsplit=1, flags=re.IGNORECASE)
     if len(parts) == 2:
         return parse_date(parts[0]), parse_date(parts[1])
     return parse_date(period), None

@@ -168,6 +168,8 @@ def extract_header(text: str) -> dict:
     #   3. "for the month of <Month> <Year>" and 4. "<Month> <Year> Services" are month-level
     #   fallbacks (whole calendar month), used only when no explicit range is found.
     period = _labeled_period(text)
+    if not period:
+        period = _billed_from_to_period(text)  # Sogeti "Billed From/To Date" labeled range
     labeled = period is not None
     if not period:
         period = _long_date_range(text)  # "05 April 2026 to 25 April 2026" (tolerates no spaces / line breaks)
@@ -186,6 +188,10 @@ def extract_header(text: str) -> dict:
             period, labeled = month_of, True
     if not period:
         period = _month_period(text)  # "May 2026 Services" descriptor
+    if not period:
+        # A bare "Month YYYY" sitting in the document header/title (above the line items), e.g.
+        # "Acima Mobile App Timesheet - April 2026" -> that full calendar month.
+        period = _header_month_period(text)
     return {
         "vendor_name": vendor,
         "invoice_number": _first_match(_INVOICE_NO_PATTERNS, text),
@@ -197,6 +203,20 @@ def extract_header(text: str) -> dict:
 
 
 _PERIOD_LABEL_RE = re.compile(r"(pay\s*period|service\s*period|billing\s*period|period)", re.IGNORECASE)
+
+# Sogeti/Capgemini: a "Billed From Date ... Billed To Date" label, then the two dates — which a
+# two-column layout can push onto a later line behind other text — so allow a gap before the pair.
+_BILLED_FROM_TO_RE = re.compile(
+    r"Billed\s*From\s*Date.{0,200}?"
+    r"(\d{1,2}-[A-Za-z]{3}-\d{2,4})\s+(\d{1,2}-[A-Za-z]{3}-\d{2,4})",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _billed_from_to_period(text: str) -> str | None:
+    """A labeled 'Billed From Date / Billed To Date' range -> 'start - end' (authoritative)."""
+    m = _BILLED_FROM_TO_RE.search(text)
+    return f"{m.group(1)} - {m.group(2)}" if m else None
 
 _MONTH_NAMES = (
     "January|February|March|April|May|June|July|August|September|October|November|December"
@@ -230,6 +250,20 @@ def _month_period(text: str) -> str | None:
 def _month_of_period(text: str) -> str | None:
     """Derive a full-calendar-month period from an 'Invoice for the month of <Month> <Year>' phrase."""
     m = _MONTH_OF_RE.search(text)
+    return _full_month_period(m.group(1), m.group(2)) if m else None
+
+
+# A bare "Month YYYY" (e.g. "April 2026"). 4-digit year required, so per-line day-dates like
+# "1-Apr-26" can't match. Searched only in the header so a stray month elsewhere isn't mistaken.
+_BARE_MONTH_RE = re.compile(rf"\b({_MONTH_NAMES})\.?\s+(\d{{4}})\b", re.IGNORECASE)
+
+
+def _header_month_period(text: str) -> str | None:
+    """A bare 'Month YYYY' in the document header/title (the lines above the line items) implies
+    that full calendar month, even with no 'Period:'/'for the month of' label (e.g. a timesheet
+    titled 'Acima Mobile App Timesheet - April 2026')."""
+    head = "\n".join(text.splitlines()[:6])
+    m = _BARE_MONTH_RE.search(head)
     return _full_month_period(m.group(1), m.group(2)) if m else None
 
 
@@ -625,6 +659,70 @@ def parse_services_rendered(tables: list[list[list[str]]]) -> list[ParsedLineIte
     return items
 
 
+# --- "Name ...Billable N Hours @ rate" text lines (Sogeti / Capgemini) ----------------------
+# Each line item is plain text the table extractor can't read, e.g.:
+#   "1 Akde, Sridevi ...Billable 189.00 Hours @ 20.00 No 3,780.00 3,780.00"
+# The rate may wrap to the next line ("@ No <amount>\n25.00") or the row may be truncated at a page
+# break — so "Hours" and "@ rate" are optional; we always capture the name and hours.
+_BILLABLE_LINE_RE = re.compile(
+    r"^\s*\d+\s+(.+?)\s*\.{2,}\s*Billable\s+([\d,]+\.?\d*)(?:\s*Hours)?(?:\s*@\s*([\d,]+\.?\d*))?",
+    re.MULTILINE,
+)
+
+
+def parse_billable_lines(text: str) -> list[ParsedLineItem]:
+    """Parse '<#> <Last, First> ...Billable <hours> Hours @ <rate>' text line items."""
+    items: list[ParsedLineItem] = []
+    for m in _BILLABLE_LINE_RE.finditer(text):
+        name = m.group(1).strip().rstrip(".").strip()
+        hours = clean_number(m.group(2))
+        if not name or hours is None:
+            continue
+        rate = clean_number(m.group(3)) if m.group(3) else None
+        amount = round(hours * rate, 2) if rate is not None else None
+        items.append(ParsedLineItem(contractor_name=name, hours=hours, rate=rate, amount=amount))
+    return items
+
+
+# --- "Qty | Item | Rate | Amount" text rows (Odyssey) --------------------------------------
+# A simple invoice whose data row sits in the text, not a real table, e.g.:
+#   "Qty Item Rate Amount"
+#   "176 Shanda Wright $93.00 $16,368.00"   (Qty=hours, Item=contractor name)
+_QTY_ITEM_HEADER_RE = re.compile(
+    r"\bQ(?:ty|uantity)\b.*\bItem\b|\bItem\b.*\bQ(?:ty|uantity)\b", re.IGNORECASE
+)
+_QTY_ITEM_ROW_RE = re.compile(
+    r"^[ \t]*(\d+(?:[.,]\d+)?)[ \t]+([A-Za-z][^$\d\n]*?)[ \t]+"
+    r"\$?[ \t]*([\d,]+(?:\.\d+)?)[ \t]+\$?[ \t]*([\d,]+(?:\.\d+)?)[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def parse_qty_item_lines(text: str) -> list[ParsedLineItem]:
+    """Parse 'Qty Item Rate Amount' invoices where the row is '<hours> <name> $<rate> $<amount>'.
+
+    Only runs when a 'Qty … Item' header is present, so footer lines (Subtotal/Tax/Total) and stray
+    numbers aren't mistaken for line items.
+    """
+    if not _QTY_ITEM_HEADER_RE.search(text):
+        return []
+    items: list[ParsedLineItem] = []
+    for m in _QTY_ITEM_ROW_RE.finditer(text):
+        name = m.group(2).strip()
+        hours = clean_number(m.group(1))
+        if not name or hours is None:
+            continue
+        items.append(
+            ParsedLineItem(
+                contractor_name=name,
+                hours=hours,
+                rate=clean_number(m.group(3)),
+                amount=clean_number(m.group(4)),
+            )
+        )
+    return items
+
+
 # --- text-layout fallback (no real table) ----------------------------------
 # Matches lines like "Hours- Cristian Vargas- $65/hr" (Global Compass style rate lists).
 _RATE_LINE_RE = re.compile(r"Hours\s*-\s*([A-Za-z][A-Za-z .'\-]+?)\s*-\s*\$\s*(\d+(?:\.\d+)?)\s*/\s*hr", re.IGNORECASE)
@@ -754,6 +852,12 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
     # Fallback for text-layout invoices (no real table) such as Global Compass's "Hours- Name- $rate/hr".
     if not items:
         items = parse_rate_list_text(text)
+    # Sogeti/Capgemini "Name ...Billable N Hours @ rate" text lines (table extractor reads nothing).
+    if not items and re.search(r"\.{2,}\s*Billable\b", text, re.IGNORECASE):
+        items = parse_billable_lines(text)
+    # Odyssey "Qty Item Rate Amount" invoices where the data row is plain text under the header.
+    if not items:
+        items = parse_qty_item_lines(text)
     # Multi-contractor "Services Rendered for:" billing (Gravity IT) where standard table parsing only
     # catches one row — use it when it recovers more contractors.
     if "services rendered for" in text.lower():

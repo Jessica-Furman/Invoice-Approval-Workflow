@@ -89,6 +89,26 @@ export function invoiceExcelUrl(id: number): string {
   return `${baseURL}/api/invoices/${id}/export.xlsx`;
 }
 
+/** Generate the Coupa import CSV for a matched invoice and trigger a browser download.
+ *  POST (not a plain link) because generating stamps coupa_csv_generated_at + logs an audit event. */
+export async function generateCoupaCsv(id: number): Promise<void> {
+  const res = await api.post(`/api/invoices/${id}/coupa.csv`, null, {
+    responseType: "blob",
+  });
+  const disposition = String(res.headers["content-disposition"] ?? "");
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match?.[1] ?? `coupa_${id}.csv`;
+
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function fetchDashboard(): Promise<DashboardResponse> {
   const { data } = await api.get<DashboardResponse>("/api/dashboard");
   return data;

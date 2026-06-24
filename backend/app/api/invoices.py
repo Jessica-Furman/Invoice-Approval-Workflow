@@ -1,8 +1,10 @@
 """Invoice + dashboard API routes."""
 from __future__ import annotations
 
+import io
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -13,6 +15,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.config import settings
 from app.db.base import get_db
+from app.services.coupa import coupa_csv_bytes, coupa_csv_filename
 from app.services.export_excel import workbook_from_detail
 from app.services.ingestion import ingest_pdf
 from app.services.storage import LocalStorage
@@ -199,6 +202,37 @@ def export_invoice_xlsx(invoice_id: int, db: Session = Depends(get_db)) -> Strea
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.post("/invoices/{invoice_id}/coupa.csv")
+def generate_coupa_csv(invoice_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
+    """Build the Coupa import CSV for a MATCHED invoice and download it (User Stories 19-21).
+
+    This is the manual "Approve & Create CSV" action — it only runs when the user clicks the button,
+    never automatically. Only matched invoices are eligible; flagged/needs-review/failed invoices are
+    blocked (US 21) and must go through manual review first. Generating the CSV stamps
+    ``coupa_csv_generated_at`` and logs an audit event; the file itself is not routed anywhere yet.
+    """
+    inv = db.get(models.Invoice, invoice_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if inv.status != models.STATUS_MATCHED:
+        raise HTTPException(
+            status_code=409,
+            detail="Only matched invoices can generate a Coupa CSV. Resolve the flags first.",
+        )
+
+    data = coupa_csv_bytes(inv, db)
+    inv.coupa_csv_generated_at = datetime.utcnow()
+    db.add(models.AuditLog(invoice_id=inv.id, event="coupa_csv_generated", detail={"bytes": len(data)}))
+    db.commit()
+
+    fname = coupa_csv_filename(inv)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 

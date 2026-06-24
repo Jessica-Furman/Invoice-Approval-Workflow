@@ -1,0 +1,305 @@
+# Coupa Contractor Invoice CSV MVP
+
+## Purpose
+
+Build the MVP CSV export for contractor invoices that need to be imported into Coupa.
+
+The system should take validated contractor invoice data, Clarity timekeeping/project data, and internal accounting mappings, then generate Coupa-ready CSV rows.
+
+For the MVP, generate:
+
+1. One `Invoice` header row per invoice.
+2. One or more `Invoice Line` rows per invoice.
+3. Optional `Account Allocation` rows only when an invoice line must be split across multiple accounts, projects, departments, budgets, or cost centers.
+4. Do not add the invoice PDF/S3 attachment workflow yet. That is a later phase.
+
+---
+
+## Recommended MVP CSV Structures
+
+### Header Row Columns
+
+```csv
+Invoice,Invoice Number,Supplier Number,Supplier Name,Status,Invoice Date,Submit For Approval?,Line Level Taxation,Chart of Accounts,Currency,Requester Email,Requester Name,Payment Terms,Supplier Note,Local Currency Net,Taxes In Origin Country Currency,Local Currency Gross,Attachment 1
+```
+
+### Line Row Columns
+
+```csv
+Invoice Line,Invoice Number,Supplier Number,Supplier Name,Line Number,Description,Price,Quantity,Unit of Measure,Category,PO Number,PO Line Number,Account Code,Account Segment 1,Account Segment 2,Account Segment 3,Account Segment 4,Budget Period Name,Billing Notes
+```
+
+### Allocation Row Columns, If Needed
+
+```csv
+Account Allocation,Invoice Number,Invoice Line Number,Amount,Percent,Account Code,Account Segment 1,Account Segment 2,Account Segment 3,Account Segment 4,Budget Period Name
+```
+
+---
+
+## Invoice Header Row Requirements
+
+The `Invoice` row identifies the invoice-level record.
+
+| Coupa CSV Field | Required? | What to Populate |
+|---|---:|---|
+| `Invoice` | Row type | Use this to identify the row as an invoice header. |
+| `Invoice Number` | Yes | Invoice number from the vendor invoice. |
+| `Invoice Date` | Yes | Date on the invoice. |
+| `Supplier Name` or `Supplier Number` | Needed for lookup | Prefer `Supplier Number` if Upbound has stable Coupa vendor IDs. |
+| `Line Level Taxation` | Yes | Boolean. For contractor invoices, default to `false` unless line-level tax is explicitly needed. |
+| `Chart of Accounts` | Yes | Upbound's Coupa chart of accounts name or code. |
+| `Local Currency Net` | Yes | Net invoice amount before tax. |
+| `Taxes In Origin Country Currency` | Yes | Tax amount. For most contractor invoices, default to `0.00` if no tax exists. |
+| `Local Currency Gross` | Yes | Total invoice amount including tax. |
+
+### Recommended Header Defaults
+
+| Field | MVP Default / Rule |
+|---|---|
+| `Status` | Use the value required by Upbound's Coupa process, such as `draft`, `new`, or `pending_approval`. |
+| `Submit For Approval?` | Default to `no`. |
+| `Currency` | Default to `USD` unless extracted invoice currency says otherwise. |
+| `Requester Email` | Manager/requester email from internal mapping. |
+| `Requester Name` | Manager/requester name from internal mapping. |
+| `Payment Terms` | Pull from supplier master or leave blank if Coupa applies default supplier terms. |
+| `Supplier Note` | Use for automation notes, Clarity match status, or exception summary. |
+| `Attachment 1` | Leave blank for MVP. PDF/S3 support comes later. |
+
+---
+
+## Invoice Line Row Requirements
+
+The `Invoice Line` row identifies the service line being imported.
+
+| Coupa CSV Field | Required? | What to Populate |
+|---|---:|---|
+| `Invoice Line` | Row type | Identifies the row as an invoice line. |
+| `Invoice Number` | Yes | Same invoice number as the header. |
+| `Supplier Name` or `Supplier Number` | Lookup | Same supplier as the header. |
+| `Description` | Yes | Service description from invoice or generated text. |
+| `Price` | Yes | Hourly rate if `Quantity` is hours, or total line amount if quantity is `1`. |
+| `Unit of Measure` | Yes | Must already exist in Coupa. Examples: `HOUR`, `EA`. |
+
+### Recommended Invoice Line Fields for Contractor Invoices
+
+| Coupa CSV Field | Why It Matters |
+|---|---|
+| `Line Number` | Needed to connect allocations and taxes to the line. |
+| `Quantity` | Contractor hours from invoice. |
+| `Price` | Hourly rate if quantity is hours; line total if quantity is 1. |
+| `Category` | Example: `Contractor Services` or `Professional Services`. |
+| `PO Number` | Include if invoices are PO-backed. |
+| `PO Line Number` | Required if using PO matching and not using supplier part number. |
+| `Account Code` | Leave blank. |
+| `Account Segment 1-20` | Use these if Coupa expects segmented accounting fields. |
+| `Budget Period Name` | Use if Coupa budget validation is enabled. |
+| `Billing Notes` | Use for Clarity match notes. |
+
+---
+
+## Optional Account Allocation Rows
+
+Use `Account Allocation` rows only if one invoice line needs to be split across multiple projects, departments, budgets, cost centers, or account codes.
+
+| Coupa CSV Field | What to Populate |
+|---|---|
+| `Account Allocation` | Row type for allocation. |
+| `Invoice Number` | Parent invoice number. |
+| `Invoice Line Number` | Parent invoice line number. |
+| `Amount` | Dollar amount allocated to this account. |
+| `Percent` | Percent allocated to this account. Use either amount or percent depending on Coupa setup. |
+| `Account Code` | Full account code if available. |
+| `Account Segment 1` | Company code. Company code id determined based on company the contractor works for. If the company is RAC then company code = `5`, if company is ACIMA then company code = `67` |
+| `Account Segment 2` | Cost Center. If RAC then = `H0003`, If ACIMA then = `AC000` |
+| `Account Segment 3` | CAPEX or OPEX code. If CAPEX then code = `246010`, If OPEX then code = `667070` |
+| `Account Segment 4` | Segment value configured by Upbound/Coupa. |
+| `Budget Period Name` | Budget period, if required. |
+
+---
+
+## Data Needed From Accounting / Internal Mapping
+
+The accounting team or internal source of truth must provide these values before the CSV can be generated correctly.
+
+| Internal Data Needed | Coupa Destination |
+|---|---|
+| Contractor name | Supplier mapping and/or invoice description. |
+| Project name | Account segment, billing note, or tag. |
+| Project ID / Budget ID | Account segment or account code. |
+| Department code | Account segment. |
+| Cost center | Account segment. |
+| CapEx vs OpEx | Account segment, category, tag, or custom field if configured. |
+| Manager / approver | Requester fields or invoice header assignment. |
+| Hours worked | Invoice line quantity. |
+| Hourly rate | Invoice line price. |
+| Total amount | Header gross/net and line total. |
+| Clarity match result | Supplier note, billing notes, or internal audit table. |
+| Exception reason | Supplier note or internal exception table if invoice is rejected before import. |
+
+---
+
+## Tax Fields
+
+For most contractor invoices, taxes may be zero, but Coupa still requires certain header totals.
+
+### Header-Level Tax Fields
+
+| Coupa CSV Field | Use |
+|---|---|
+| `Tax Amount` | Header tax amount. |
+| `Tax Rate` | Tax percentage. |
+| `Tax Code` | Must exist in Coupa if used. |
+| `Tax Rate Type` | Must exist in Coupa if used. |
+| `Taxes In Origin Country Currency` | Required local/origin tax amount. |
+
+### Line-Level Tax Fields
+
+Only populate these if `Line Level Taxation = true`.
+
+| Coupa CSV Field | Use |
+|---|---|
+| `Line Tax Amount` | Tax amount on the line. |
+| `Line Tax Rate` | Tax rate on the line. |
+| `Line Tax Code` | Must match an existing Coupa tax code. |
+| `Line Tax Rate Type` | Coupa tax rate type. |
+| `Line Tax Location` | Tax jurisdiction/location. |
+| `Line Tax Description` | Tax description. |
+
+### MVP Tax Rule
+
+For the MVP contractor invoice workflow:
+
+- Set `Line Level Taxation` to `false` by default.
+- Set `Taxes In Origin Country Currency` to `0.00` when no tax is present.
+- Set `Local Currency Net` equal to `Local Currency Gross` when tax is `0.00`.
+- Do not generate line-level tax fields unless the invoice explicitly includes line-level tax and Coupa requires it.
+
+---
+
+## PDF / Attachment Workflow
+
+Do not implement this for the first MVP.
+
+Later, add a URL to the S3 bucket where the PDF image of the invoice is stored.
+
+Future attachment fields may include:
+
+| Field | Future Use |
+|---|---|
+| `Image Scan Filename` | Original invoice PDF filename. |
+| `Image Scan URL` | S3 or hosted URL for invoice PDF. |
+| `Attachment 1` | File reference or URL, depending on Coupa import setup. |
+
+---
+
+## MVP Validation Rules
+
+Before generating a Coupa CSV row, validate:
+
+1. Invoice number exists.
+2. Invoice date exists.
+3. Supplier name or supplier number exists.
+4. Supplier can be matched to Coupa supplier master.
+5. Contractor name can be matched to invoice and/or Clarity data.
+6. Invoice period matches Clarity period.
+7. Invoice hours match approved Clarity hours.
+8. Invoice hourly rate exists.
+9. Invoice total equals `hours * hourly_rate`, unless invoice uses line-total logic.
+10. Required accounting values exist:department/cost center, CapEx/OpEx, and manager/requester.
+11. Tax fields are valid and default to zero when no tax exists.
+12. Unit of measure exists in Coupa, such as `HOUR`.
+
+If validation fails, do not generate a Coupa-ready approval CSV. Route the invoice to exception handling with a clear exception reason.
+
+---
+
+## Suggested Internal Data Model
+
+Use these normalized fields before converting to Coupa CSV columns.
+
+```json
+{
+  "invoice_number": "",
+  "invoice_date": "",
+  "supplier_number": "",
+  "supplier_name": "",
+  "contractor_name": "",
+  "status": "",
+  "submit_for_approval": false,
+  "line_level_taxation": false,
+  "chart_of_accounts": "",
+  "currency": "USD",
+  "requester_email": "",
+  "requester_name": "",
+  "payment_terms": "",
+  "supplier_note": "",
+  "local_currency_net": 0.0,
+  "taxes_in_origin_country_currency": 0.0,
+  "local_currency_gross": 0.0,
+  "lines": [
+    {
+      "line_number": 1,
+      "description": "",
+      "price": 0.0,
+      "quantity": 0.0,
+      "unit_of_measure": "HOUR",
+      "category": "Contractor Services",
+      "po_number": "",
+      "po_line_number": "",
+      "account_code": "",
+      "account_segment_1": "",
+      "account_segment_2": "",
+      "account_segment_3": "",
+      "account_segment_4": "",
+      "budget_period_name": "",
+      "billing_notes": ""
+    }
+  ],
+  "allocations": []
+}
+```
+
+---
+
+## Implementation Order for Claude Code
+
+1. Create constants for the three supported row schemas:
+   - `INVOICE_HEADER_COLUMNS`
+   - `INVOICE_LINE_COLUMNS`
+   - `ACCOUNT_ALLOCATION_COLUMNS`
+
+2. Create a normalized invoice model that stores extracted invoice data, Clarity match data, and accounting mapping data.
+
+3. Create validation functions:
+   - `validate_invoice_header(invoice)`
+   - `validate_invoice_lines(invoice)`
+   - `validate_accounting_fields(invoice)`
+   - `validate_tax_fields(invoice)`
+   - `validate_ready_for_coupa(invoice)`
+
+4. Create a CSV generation function:
+   - `generate_coupa_invoice_csv(invoices, output_path)`
+
+5. Generate rows in this order:
+   - Invoice header row
+   - Invoice line rows
+   - Account allocation rows, if needed
+
+6. Add tests for:
+   - Successful single-line contractor invoice
+   - Missing invoice number
+   - Missing supplier number/name
+   - Tax-free contractor invoice
+   - Hours/rate/total mismatch
+   - Missing accounting mapping
+   - Multi-project invoice requiring account allocations
+
+---
+
+## Important MVP Rule
+
+The CSV should only be generated for invoices that passed invoice extraction, Clarity matching, and accounting validation.
+
+Rejected or mismatched invoices should not be imported into Coupa. They should be routed to manual review with a clear exception reason.
+

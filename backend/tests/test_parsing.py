@@ -13,9 +13,80 @@ from app.services.parsing import parse_invoice
 from app.services.parsing.rules import (
     clean_number,
     extract_person_name,
+    parse_billable_lines,
+    parse_qty_item_lines,
     parse_services_rendered,
+    _billed_from_to_period,
+    _header_month_period,
     _month_of_period,
 )
+
+
+def test_parse_qty_item_lines_odyssey():
+    # Odyssey: "Qty Item Rate Amount" header then a plain-text data row "<hours> <name> $rate $amount".
+    text = (
+        "Bill To Rent A Center\n"
+        "Qty Item Rate Amount\n"
+        "176 Shanda Wright $93.00 $16,368.00\n"
+        "Subtotal $16,368.00\n"
+        "Tax (0%) $0.00\n"
+        "Total $16,368.00\n"
+        "1 of 1\n"
+        "61805"
+    )
+    items = parse_qty_item_lines(text)
+    assert len(items) == 1  # footer lines (Subtotal/Tax/Total) and "1 of 1" must NOT match
+    assert items[0].contractor_name == "Shanda Wright"
+    assert items[0].hours == 176.0
+    assert items[0].rate == 93.0
+    assert items[0].amount == 16368.0
+
+
+def test_parse_qty_item_lines_requires_header():
+    # Without a "Qty … Item" header, don't guess line items from arbitrary "<n> <word> $ $" lines.
+    assert parse_qty_item_lines("176 Shanda Wright $93.00 $16,368.00") == []
+
+
+def test_parse_billable_lines_sogeti():
+    # Sogeti/Capgemini text layout: "<#> <Last, First> ...Billable <hours> Hours @ <rate>".
+    # Covers a wrapped rate (group None) and a page-break-truncated last row.
+    text = (
+        "Item Description Tax Unit PriceExtended Amount\n"
+        "1 Akde, Sridevi ...Billable 189.00 Hours @ 20.00 No 3,780.00 3,780.00\n"
+        "2 Deshmukh, Pravin Diwakar ...Billable 180.00 Hours @ 30.00No 5,400.00 5,400.00\n"
+        "5 Khan, Mohd Alam Abdul Salam ...Billable 180.00 Hours @ No 4,500.00\n"
+        "25.00\n"
+        "13 Tiwari, Vinayak ...Billable 153.0"
+    )
+    items = parse_billable_lines(text)
+    assert [li.contractor_name for li in items] == [
+        "Akde, Sridevi",
+        "Deshmukh, Pravin Diwakar",
+        "Khan, Mohd Alam Abdul Salam",
+        "Tiwari, Vinayak",
+    ]
+    assert [li.hours for li in items] == [189.0, 180.0, 180.0, 153.0]
+    assert items[0].rate == 20.0
+    assert items[2].rate is None  # wrapped onto the next line — still captured the name + hours
+
+
+def test_billed_from_to_period():
+    # Two-column layout pushes the dates behind other text; still parse the labeled range.
+    text = "Account # 700603496 Billed From Date Billed To Date\nAccount Name: Sogeti USA 02-Mar-2026 31-Mar-2026"
+    assert _billed_from_to_period(text) == "02-Mar-2026 - 31-Mar-2026"
+
+
+def test_header_month_period():
+    # A bare "Month YYYY" in the title/header (no "Period:" label) -> that full calendar month.
+    assert (
+        _header_month_period("Acima Mobile App Timesheet - April 2026\nName Sharan ...")
+        == "4/1/2026 - 4/30/2026"
+    )
+    assert _header_month_period("Timesheet\nFebruary 2026\nName ...") == "2/1/2026 - 2/28/2026"
+    # Per-line day-dates (2-digit year) must NOT be mistaken for a period.
+    assert _header_month_period("Invoice 123\nDate Day\n1-Apr-26 8\n2-Apr-26 8") is None
+    # A month only deep in the body (not the header) is ignored.
+    assert _header_month_period("\n".join(["line"] * 10 + ["Worked in May 2026"])) is None
 
 
 def test_parse_services_rendered_multi_contractor():

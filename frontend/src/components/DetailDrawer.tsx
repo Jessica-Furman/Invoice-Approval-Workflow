@@ -16,6 +16,7 @@ import {
   deleteInvoice,
   fetchClarityEntries,
   fetchInvoice,
+  generateCoupaCsv,
   invoiceExcelUrl,
   invoicePdfUrl,
   type ClarityProject,
@@ -289,6 +290,13 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
     },
   });
 
+  const csv = useMutation({
+    mutationFn: () => generateCoupaCsv(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["invoice", id] });
+    },
+  });
+
   return (
     <div className="fixed inset-0 z-30 flex justify-end bg-slate-900/30" onClick={onClose}>
       <div
@@ -423,8 +431,12 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                   Export to Excel
                 </a>
                 {data.status === "matched" ? (
-                  <button className="rounded-lg bg-brand-lime px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm hover:bg-brand-limedark">
-                    Approved, create CSV
+                  <button
+                    onClick={() => csv.mutate()}
+                    disabled={csv.isPending}
+                    className="rounded-lg bg-brand-lime px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm hover:bg-brand-limedark disabled:opacity-60"
+                  >
+                    {csv.isPending ? "Generating…" : "Approve & Create CSV"}
                   </button>
                 ) : (
                   <button className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900">
@@ -433,6 +445,16 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                 )}
               </div>
             </div>
+            {data.coupa_csv_generated_at && !csv.isError && (
+              <div className="mt-3 text-right text-xs text-slate-400">
+                Coupa CSV last generated {date(data.coupa_csv_generated_at)}.
+              </div>
+            )}
+            {csv.isError && (
+              <div className="mt-3 text-right text-sm text-rose-600">
+                Couldn’t generate the Coupa CSV. Only matched invoices are eligible — is the backend running?
+              </div>
+            )}
             {del.isError && (
               <div className="mt-3 text-right text-sm text-rose-600">
                 Couldn’t delete the invoice. Is the backend running?
