@@ -19,6 +19,24 @@ from app.services.storage import LocalStorage
 from app.utils.names import normalize_name
 
 
+def _invoice_no_from_filename(stem: str) -> str:
+    """Best-effort invoice number from a PDF filename when none is printed in the document.
+
+    Prefers an embedded alphanumeric invoice code, e.g.
+    'ACI0501202621760_Invoice - Acima Mobile App April 2026' -> 'ACI0501202621760'. Falls back to the
+    first token containing a digit, then the whole stem.
+    """
+    import re
+
+    m = re.search(r"[A-Za-z]{2,6}\d{5,}[A-Za-z0-9-]*", stem)  # letter-prefixed code like ACI0501…
+    if m:
+        return m.group(0)
+    for tok in re.split(r"[_\s]+", stem):
+        if any(c.isdigit() for c in tok):
+            return tok
+    return stem
+
+
 def parse_period(period: str | None) -> tuple[date | None, date | None]:
     """Split a 'start - end' / 'start to end' period string into two dates (best effort).
 
@@ -71,7 +89,10 @@ def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) 
         db.add(inv)
 
     inv.vendor_name = p.vendor_name
-    inv.invoice_number = p.invoice_number or Path(pdf_path).stem
+    inv.invoice_number = p.invoice_number or _invoice_no_from_filename(Path(pdf_path).stem)
+    # Re-uploading a previously-exported (archived) invoice brings it back onto the board so it can be
+    # re-tested. It's the same DB row (idempotent on invoice number), so History won't duplicate it.
+    inv.archived_at = None
     inv.date_received = p.date_received
     # Period priority: a labeled "Period:" header is authoritative (handles invoices whose per-line
     # dates have typos); otherwise use the full span of the line-item periods (handles invoices like

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import {
+  bulkExportMatched,
   fetchDashboard,
   uploadInvoices,
   type InvoiceSummary,
@@ -10,14 +11,16 @@ import {
 import { ClarityBar } from "../components/ClarityBar";
 import { Column } from "../components/Column";
 import { DetailDrawer } from "../components/DetailDrawer";
+import { SlideToExport } from "../components/SlideToExport";
 
-export type View = "dashboard" | "flagged" | "matched" | "all";
+export type View = "dashboard" | "flagged" | "matched" | "all" | "history";
 
 const TITLES: Record<View, string> = {
   dashboard: "Invoice Overview",
   flagged: "Flagged Invoices",
   matched: "Matched Invoices",
   all: "All Invoices",
+  history: "History",
 };
 
 const PROCESSING_MESSAGES = ["Upload in progress…", "Parsing data…", "Processing data…"];
@@ -72,6 +75,15 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
     },
   });
 
+  // "Export All" slider: bulk-export every matched invoice (ZIP of CSVs) then clear them from the board.
+  const bulkExport = useMutation({
+    mutationFn: bulkExportMatched,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["history"] });
+    },
+  });
+
   function onFilesChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     if (files.length) {
@@ -118,6 +130,12 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
       {upload.isError && (
         <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
           Upload failed. Is the backend running on :8000?
+        </div>
+      )}
+
+      {bulkExport.isError && (
+        <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          Export failed. There may be no matched invoices to export, or the backend is down.
         </div>
       )}
 
@@ -187,6 +205,13 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
                 variant="matched"
                 invoices={data.matched.filter((i) => matchesSearch(i, q))}
                 onSelect={setSelected}
+                headerExtra={
+                  <SlideToExport
+                    count={data.matched.length}
+                    pending={bulkExport.isPending}
+                    onExport={() => bulkExport.mutate()}
+                  />
+                }
               />
             )}
             {(view === "dashboard" || view === "all") && (

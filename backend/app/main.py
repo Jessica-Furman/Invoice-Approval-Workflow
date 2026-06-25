@@ -16,6 +16,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Browsers hide Content-Disposition from cross-origin JS unless it's explicitly exposed — the
+    # frontend reads it to name CSV/Excel downloads (else it falls back to a generic name).
+    expose_headers=["Content-Disposition"],
 )
 
 

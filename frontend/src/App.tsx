@@ -4,9 +4,11 @@ import {
   Flag,
   LayoutGrid,
   CheckCircle2,
+  History as HistoryIcon,
   Settings,
 } from "lucide-react";
 import { Dashboard, type View } from "./pages/Dashboard";
+import { History } from "./pages/History";
 import { SearchBar } from "./components/SearchBar";
 
 const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
@@ -14,6 +16,7 @@ const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
   { label: "Flagged Invoices", icon: Flag, view: "flagged" },
   { label: "Matched Invoices", icon: CheckCircle2, view: "matched" },
   { label: "All Invoices", icon: FileText, view: "all" },
+  { label: "History", icon: HistoryIcon, view: "history" },
 ];
 
 export default function App() {
@@ -71,7 +74,11 @@ export default function App() {
           <SearchBar value={search} onChange={setSearch} />
         </header>
         <main className="p-8">
-          <Dashboard view={view} search={search} />
+          {view === "history" ? (
+            <History search={search} />
+          ) : (
+            <Dashboard view={view} search={search} />
+          )}
         </main>
       </div>
     </div>

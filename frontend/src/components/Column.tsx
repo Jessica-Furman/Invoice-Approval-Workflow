@@ -107,10 +107,12 @@ export function Column({
   variant,
   invoices,
   onSelect,
+  headerExtra,
 }: {
   variant: ColumnVariant;
   invoices: InvoiceSummary[];
   onSelect: (id: number) => void;
+  headerExtra?: React.ReactNode;
 }) {
   const [sort, setSort] = useState<SortKey>("default");
   const sorted = useMemo(() => sortInvoices(invoices, sort), [invoices, sort]);
@@ -125,7 +127,9 @@ export function Column({
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
           {invoices.length}
         </span>
-        <div className="ml-auto">
+        {/* Slider (Matched column) sits to the right of the label, filling the row. */}
+        {headerExtra && <div className="ml-2 min-w-[160px] flex-1">{headerExtra}</div>}
+        <div className={headerExtra ? "" : "ml-auto"}>
           <SortMenu value={sort} onChange={setSort} />
         </div>
       </div>

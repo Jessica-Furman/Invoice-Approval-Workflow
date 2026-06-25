@@ -17,6 +17,8 @@ from app.services.coupa import (
     INVOICE_LINE_COLUMNS,
     build_header_row,
     coupa_csv_bytes,
+    coupa_csv_filename,
+    _load_project_company_map,
 )
 from app.utils.names import normalize_name
 
@@ -131,10 +133,159 @@ def test_acima_project_maps_company_and_cost_center(db: Session):
     assert line["Account Segment 2"] == "AC000"    # ACIMA cost center
 
 
+def test_filename_is_vendor_plus_invoice_number(db: Session):
+    inv = _matched_invoice(db)
+    assert coupa_csv_filename(inv) == "AVASOFT_INV-100.csv"
+
+
+def test_filename_strips_illegal_characters(db: Session):
+    inv = _matched_invoice(db)
+    inv.vendor_name = "Odyssey Information Services, Inc."
+    inv.invoice_number = "61805/A"
+    # commas kept; path-illegal "/" removed; trailing "." trimmed; vendor and number joined by "_".
+    assert coupa_csv_filename(inv) == "Odyssey Information Services, Inc_61805A.csv"
+
+
+def test_load_project_company_map_from_lob(db: Session, tmp_path):
+    csv_path = tmp_path / "Company_by_Project.csv"
+    csv_path.write_text(
+        "Project Name,Project ID,Line of Business\n"
+        "Alpha,PR001,/Upbound/RAC\n"
+        "Beta,PR002,/Upbound\n"            # bare /Upbound -> RAC
+        "Gamma,PR003,/Upbound/Acima\n"     # note the file uses 'Acima' casing
+        "Delta,PR004,\n"                   # blank LOB -> unmapped
+        ",PR005,/Upbound/RAC\n",           # kept (has a project id)
+        encoding="utf-8",
+    )
+    m = _load_project_company_map(csv_path)
+    assert m["PR001"] == "RAC"
+    assert m["PR002"] == "RAC"
+    assert m["PR003"] == "ACIMA"
+    assert "PR004" not in m
+
+
+def test_company_segments_resolved_by_project_id(db: Session, monkeypatch):
+    # A real Project ID in the mapping drives company code + cost center, regardless of project name.
+    import app.services.coupa as coupa
+    monkeypatch.setattr(coupa, "_project_company_map", lambda: {"PR999": "ACIMA"})
+    ts = models.ClarityTimesheet(
+        contractor_name="Jane Doe", contractor_name_normalized=normalize_name("Jane Doe"),
+        hours=40.0, date_worked=date(2026, 5, 1), is_posted=True, is_time_off=False,
+        project_id="PR999", investment_name="Generic Project (no name signal)", capex_opex="OPEX",
+        source_row_hash="tsX",
+    )
+    db.add(ts); db.flush()
+    inv = models.Invoice(
+        vendor_name="AVASOFT", invoice_number="INV-200", status=models.STATUS_MATCHED,
+        date_received=date(2026, 5, 31), total_invoice_cost=3800.0,
+        line_items=[models.InvoiceLineItem(
+            contractor_name="Jane Doe", contractor_name_normalized=normalize_name("Jane Doe"),
+            hours=40.0, rate=95.0, amount=3800.0, line_status=models.STATUS_MATCHED,
+            matched_clarity_id=ts.id, diff={"clarity_hours": 40.0},
+        )],
+    )
+    db.add(inv); db.commit(); db.refresh(inv)
+    line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
+    assert line["Account Segment 1"] == "67"      # ACIMA company code (by project id)
+    assert line["Account Segment 2"] == "AC000"   # ACIMA cost center
+    assert line["Account Segment 3"] == "667070"  # OPEX GL code
+
+
+def _split_invoice(db: Session):
+    """One contractor whose Clarity hours span a RAC project (30h) and an ACIMA project (40h)."""
+    base = dict(
+        contractor_name="Split Contractor",
+        contractor_name_normalized=normalize_name("Split Contractor"),
+        is_posted=True, is_time_off=False,
+    )
+    rac = models.ClarityTimesheet(
+        **base, hours=30.0, date_worked=date(2026, 5, 2), project_id="PRAC",
+        investment_name="Some RAC Project", capex_opex="CAPEX", source_row_hash="r1",
+    )
+    aci = models.ClarityTimesheet(
+        **base, hours=40.0, date_worked=date(2026, 5, 3), project_id="PACI",
+        investment_name="Some ACIMA Project", capex_opex="CAPEX", source_row_hash="a1",
+    )
+    db.add_all([rac, aci]); db.flush()
+    inv = models.Invoice(
+        vendor_name="AVASOFT", invoice_number="INV-300", status=models.STATUS_MATCHED,
+        date_received=date(2026, 5, 31),
+        payment_period_start=date(2026, 5, 1), payment_period_end=date(2026, 5, 31),
+        line_items=[models.InvoiceLineItem(
+            contractor_name="Split Contractor",
+            contractor_name_normalized=normalize_name("Split Contractor"),
+            hours=70.0, rate=100.0, amount=7000.0, line_status=models.STATUS_MATCHED,
+            matched_clarity_id=rac.id, diff={"clarity_hours": 70.0},
+        )],
+    )
+    db.add(inv); db.commit(); db.refresh(inv)
+    return inv
+
+
+def test_split_contractor_into_one_line_per_company(db: Session, monkeypatch):
+    import app.services.coupa as coupa
+    monkeypatch.setattr(coupa, "_project_company_map", lambda: {"PRAC": "RAC", "PACI": "ACIMA"})
+    inv = _split_invoice(db)
+    line_rows = [r for r in _parse(coupa_csv_bytes(inv, db))[2:] if r[0] == "Invoice Line"]
+    assert len(line_rows) == 2  # one contractor -> two lines (RAC, ACIMA)
+    by = {dict(zip(INVOICE_LINE_COLUMNS, r))["Account Segment 1"]: dict(zip(INVOICE_LINE_COLUMNS, r))
+          for r in line_rows}
+    rac, aci = by["5"], by["67"]
+    # RAC line: 30 Clarity hours, RAC cost center; amount = 30 x invoice rate 100.
+    assert rac["Quantity"] == "30" and rac["Account Segment 2"] == "H0003" and rac["Price"] == "100.00"
+    # ACIMA line: 40 hours, ACIMA cost center.
+    assert aci["Quantity"] == "40" and aci["Account Segment 2"] == "AC000"
+    # Line numbers are sequential across the split.
+    assert {r[4] for r in line_rows} == {"1", "2"}
+
+
+def test_single_company_contractor_stays_one_line(db: Session, monkeypatch):
+    import app.services.coupa as coupa
+    monkeypatch.setattr(coupa, "_project_company_map", lambda: {"PR999": "ACIMA"})
+    inv = _matched_invoice(db)  # one contractor, one project PR1 (not in map) -> single bucket
+    line_rows = [r for r in _parse(coupa_csv_bytes(inv, db))[2:] if r[0] == "Invoice Line"]
+    assert len(line_rows) == 1
+    assert dict(zip(INVOICE_LINE_COLUMNS, line_rows[0]))["Quantity"] == "40"  # invoice hours
+
+
+def test_matched_invoice_gets_real_chart_of_accounts(db: Session):
+    inv = _matched_invoice(db)  # status == matched
+    assert build_header_row(inv)["Chart of Accounts"] == "321080-RT000"
+
+
+def test_flagged_invoice_keeps_chart_placeholder(db: Session):
+    inv = _matched_invoice(db)
+    inv.status = models.STATUS_FLAGGED
+    assert build_header_row(inv)["Chart of Accounts"] == "<<CHART_OF_ACCOUNTS>>"
+
+
+def test_draft_csv_includes_only_matched_contractors(db: Session):
+    inv = _matched_invoice(db)            # one matched contractor (Jane Doe)
+    inv.status = models.STATUS_FLAGGED    # but the invoice as a whole is flagged
+    inv.line_items.append(models.InvoiceLineItem(
+        contractor_name="Unmatched Person",
+        contractor_name_normalized=normalize_name("Unmatched Person"),
+        hours=10.0, rate=50.0, amount=500.0, line_status=models.STATUS_FLAGGED,
+    ))
+    db.commit()
+    rows = _parse(coupa_csv_bytes(inv, db, matched_only=True))
+    line_rows = [r for r in rows[2:] if r[0] == "Invoice Line"]
+    descriptions = " ".join(r[5] for r in line_rows)
+    assert "Jane Doe" in descriptions            # matched contractor IS included
+    assert "Unmatched Person" not in descriptions  # unmatched contractor is OMITTED
+    # Draft of a flagged invoice keeps the Chart of Accounts placeholder.
+    header = dict(zip(INVOICE_HEADER_COLUMNS, rows[2]))
+    assert header["Chart of Accounts"] == "<<CHART_OF_ACCOUNTS>>"
+
+
+def test_draft_filename_is_prefixed(db: Session):
+    inv = _matched_invoice(db)
+    assert coupa_csv_filename(inv, draft=True) == "DRAFT_AVASOFT_INV-100.csv"
+
+
 def test_unknown_fields_are_placeholder_tokens(db: Session):
     inv = _matched_invoice(db)
     h = build_header_row(inv)
-    assert h["Chart of Accounts"] == "<<CHART_OF_ACCOUNTS>>"
     assert h["Requester Email"] == "<<APPROVER_EMAIL>>"
     assert h["Supplier Number"] == "<<SUPPLIER_NUMBER>>"
 

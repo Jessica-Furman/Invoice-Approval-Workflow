@@ -17,6 +17,7 @@ import {
   fetchClarityEntries,
   fetchInvoice,
   generateCoupaCsv,
+  generateCoupaDraftCsv,
   invoiceExcelUrl,
   invoicePdfUrl,
   type ClarityProject,
@@ -297,6 +298,10 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
     },
   });
 
+  const draftCsv = useMutation({
+    mutationFn: () => generateCoupaDraftCsv(id),
+  });
+
   return (
     <div className="fixed inset-0 z-30 flex justify-end bg-slate-900/30" onClick={onClose}>
       <div
@@ -439,8 +444,12 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                     {csv.isPending ? "Generating…" : "Approve & Create CSV"}
                   </button>
                 ) : (
-                  <button className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900">
-                    Mark as Matched
+                  <button
+                    onClick={() => draftCsv.mutate()}
+                    disabled={draftCsv.isPending}
+                    className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-60"
+                  >
+                    {draftCsv.isPending ? "Generating…" : "Create Draft CSV File"}
                   </button>
                 )}
               </div>
@@ -453,6 +462,11 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
             {csv.isError && (
               <div className="mt-3 text-right text-sm text-rose-600">
                 Couldn’t generate the Coupa CSV. Only matched invoices are eligible — is the backend running?
+              </div>
+            )}
+            {draftCsv.isError && (
+              <div className="mt-3 text-right text-sm text-rose-600">
+                Couldn’t generate the draft CSV. This invoice may have no matched contractors yet.
               </div>
             )}
             {del.isError && (

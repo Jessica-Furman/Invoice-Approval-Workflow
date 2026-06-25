@@ -115,6 +115,7 @@ class InvoiceSummary(BaseModel):
     total_invoice_cost: float | None = None
     status: str
     routed_to: str | None = None
+    archived_at: datetime | None = None  # set when bulk-exported via the slider (hidden from board)
     line_item_count: int = 0
     matched_line_count: int = 0
 

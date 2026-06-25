@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import shutil
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.config import settings
 from app.db.base import get_db
-from app.services.coupa import coupa_csv_bytes, coupa_csv_filename
+from app.services.coupa import coupa_csv_bytes, coupa_csv_filename, project_accounting
 from app.services.export_excel import workbook_from_detail
 from app.services.ingestion import ingest_pdf
 from app.services.storage import LocalStorage
@@ -50,6 +51,7 @@ def _summary(inv: models.Invoice) -> InvoiceSummary:
         total_invoice_cost=inv.total_invoice_cost,
         status=inv.status,
         routed_to=inv.routed_to,
+        archived_at=inv.archived_at,
         line_item_count=len(line_items),
         matched_line_count=matched,
     )
@@ -113,8 +115,15 @@ async def upload_invoices(
 
 @router.get("/dashboard", response_model=DashboardResponse)
 def dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
-    """Three-column board: Flagged | Matched | All (User Story 14)."""
-    invoices = db.scalars(select(models.Invoice).order_by(models.Invoice.created_at.desc())).all()
+    """Three-column board: Flagged | Matched | All (User Story 14).
+
+    Excludes archived invoices (bulk-exported via the slider) — they live on in the History tab.
+    """
+    invoices = db.scalars(
+        select(models.Invoice)
+        .where(models.Invoice.archived_at.is_(None))
+        .order_by(models.Invoice.created_at.desc())
+    ).all()
     summaries = [_summary(i) for i in invoices]
     return DashboardResponse(
         all=summaries,
@@ -237,6 +246,94 @@ def generate_coupa_csv(invoice_id: int, db: Session = Depends(get_db)) -> Stream
     )
 
 
+@router.post("/invoices/{invoice_id}/coupa-draft.csv")
+def generate_coupa_draft_csv(invoice_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
+    """Build a DRAFT Coupa CSV for a flagged invoice — lines for the contractors that DID match only.
+
+    Contractors that didn't match Clarity are omitted so the user can add those rows by hand. Works on
+    any invoice that has at least one matched line (intended for flagged invoices); the Chart of
+    Accounts stays a placeholder because the invoice isn't a clean match. Logs an audit event.
+    """
+    inv = db.get(models.Invoice, invoice_id)
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    matched_lines = [li for li in inv.line_items if li.line_status == models.STATUS_MATCHED]
+    if not matched_lines:
+        raise HTTPException(
+            status_code=409,
+            detail="No matched contractors on this invoice — nothing to draft.",
+        )
+
+    data = coupa_csv_bytes(inv, db, matched_only=True)
+    db.add(models.AuditLog(
+        invoice_id=inv.id, event="coupa_draft_csv_generated",
+        detail={"matched_lines": len(matched_lines), "bytes": len(data)},
+    ))
+    db.commit()
+
+    fname = coupa_csv_filename(inv, draft=True)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.post("/invoices/bulk-export-matched")
+def bulk_export_matched(db: Session = Depends(get_db)) -> StreamingResponse:
+    """Generate a Coupa CSV for EVERY active matched invoice, then archive them (clear from the board).
+
+    Returns a single ZIP containing one separate CSV per invoice. Archiving hides the invoices from
+    the dashboard but keeps them in the DB (visible in History) — nothing is deleted. Powers the
+    "Export All" slider on the Matched column.
+    """
+    invoices = db.scalars(
+        select(models.Invoice)
+        .where(
+            models.Invoice.status == models.STATUS_MATCHED,
+            models.Invoice.archived_at.is_(None),
+        )
+        .order_by(models.Invoice.created_at.desc())
+    ).all()
+    if not invoices:
+        raise HTTPException(status_code=409, detail="No matched invoices to export.")
+
+    now = datetime.utcnow()
+    buf = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for inv in invoices:
+            name = coupa_csv_filename(inv)
+            if name in used_names:  # guard against two invoices producing the same filename
+                name = f"{name[:-4]}_{inv.id}.csv"
+            used_names.add(name)
+            zf.writestr(name, coupa_csv_bytes(inv, db))
+            inv.coupa_csv_generated_at = now
+            inv.archived_at = now
+            db.add(models.AuditLog(invoice_id=inv.id, event="bulk_exported", detail={"file": name}))
+    db.commit()
+
+    buf.seek(0)
+    fname = f"coupa_export_{now:%Y%m%d_%H%M%S}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/history", response_model=list[InvoiceSummary])
+def history(db: Session = Depends(get_db)) -> list[InvoiceSummary]:
+    """Every invoice still in the DB — active and archived (bulk-exported) — newest first.
+
+    This is the permanent record so the user can check whether an invoice was already processed.
+    Deleted invoices are gone from the DB, so they don't appear. Re-uploads reuse the same row
+    (idempotent on invoice number), so the same invoice never appears twice.
+    """
+    invoices = db.scalars(select(models.Invoice).order_by(models.Invoice.created_at.desc())).all()
+    return [_summary(i) for i in invoices]
+
+
 @router.post("/match-all")
 def run_match_all(db: Session = Depends(get_db)) -> dict:
     """Re-run name+hours matching across all invoices, then route them to matched/flagged inboxes."""
@@ -331,6 +428,17 @@ def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDet
         else []
     )
 
+    # Enrich each project with the accounting fields the Excel export shows: cost center + LOB from the
+    # project->company mapping (same rules as the Coupa CSV), and vendor from the invoice itself.
+    project_outs: list[ClarityProjectOut] = []
+    for p in projects:
+        acct = project_accounting(p.project_id, p.project_name)
+        out = ClarityProjectOut.model_validate(p)
+        out.cost_center = acct["cost_center"] or p.cost_center
+        out.lob = acct["lob"] or p.lob
+        out.vendor = inv.vendor_name or p.vendor
+        project_outs.append(out)
+
     base = _summary(inv)
     return InvoiceDetail(
         **base.model_dump(),
@@ -340,5 +448,5 @@ def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDet
         coupa_csv_generated_at=inv.coupa_csv_generated_at,
         line_items=[LineItemOut.model_validate(li) for li in line_items],
         clarity_timesheets=timesheets,
-        clarity_projects=[ClarityProjectOut.model_validate(p) for p in projects],
+        clarity_projects=project_outs,
     )

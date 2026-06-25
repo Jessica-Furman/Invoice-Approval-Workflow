@@ -33,6 +33,13 @@ def _needs_llm(r: rules.RulesResult) -> bool:
     return not r.parsed.line_items
 
 
+def _has_mojibake_name(parsed: ParsedInvoice) -> bool:
+    """True if any contractor name carries U+FFFD — an accented char the text layer couldn't map."""
+    if parsed.contractor_name and "�" in parsed.contractor_name:
+        return True
+    return any(li.contractor_name and "�" in li.contractor_name for li in parsed.line_items)
+
+
 def _merge(base: ParsedInvoice, fallback: ParsedInvoice) -> ParsedInvoice:
     """Fill gaps in `base` (rules) from `fallback` (LLM); take LLM line items if rules found none."""
     merged = base.model_copy(deep=True)
@@ -50,6 +57,17 @@ def _merge(base: ParsedInvoice, fallback: ParsedInvoice) -> ParsedInvoice:
 def parse_invoice(pdf_path: str, *, allow_llm: bool = True) -> ParseOutcome:
     r = rules.parse_with_rules(pdf_path)
     warnings = list(r.warnings)
+
+    # Repair accented contractor names the text layer mangled to U+FFFD (e.g. Cognizant's "Pérez")
+    # using OCR, which reads the glyphs correctly. Only runs when a mojibake name is actually present.
+    if r.has_text and _has_mojibake_name(r.parsed) and ocr.is_available():
+        try:
+            ocr_text = ocr.ocr_pdf(pdf_path)
+            rules.repair_mojibake_names(r.parsed.line_items, ocr_text)
+            if r.parsed.line_items:
+                r.parsed.contractor_name = r.parsed.line_items[0].contractor_name
+        except Exception as e:  # pragma: no cover - OCR edge cases
+            warnings.append(f"OCR name repair failed: {e}")
 
     # Scanned PDF (no embedded text): try OCR before anything else (no LLM needed).
     if not r.has_text and ocr.is_available():

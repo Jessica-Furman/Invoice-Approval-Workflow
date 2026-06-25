@@ -50,6 +50,10 @@ class Invoice(Base):
     parse_confidence: Mapped[float | None] = mapped_column(Float)
 
     coupa_csv_generated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set when the invoice is bulk-exported via the "Export All" slider: it's then hidden from the
+    # dashboard board (Flagged/Matched/All) but kept in the DB and shown in History. Cleared on
+    # re-upload so a re-tested invoice reappears. NULL = still active on the board.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime)
     # Which mock Outlook inbox the PDF was routed to ("matched" | "flagged"), per User Stories 12-13.
     routed_to: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

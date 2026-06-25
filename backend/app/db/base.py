@@ -37,9 +37,29 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _ensure_columns() -> None:
+    """Lightweight migration: add columns introduced after a DB was first created.
+
+    We use create_all (no Alembic) for the MVP, and create_all never ALTERs existing tables — so a
+    column added to a model later won't appear on an old DB. This adds any missing ones idempotently.
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "invoices" not in insp.get_table_names():
+        return
+    existing = {c["name"] for c in insp.get_columns("invoices")}
+    coltype = "TIMESTAMP" if engine.dialect.name == "postgresql" else "DATETIME"
+    for name, ddl in {"archived_at": f"ADD COLUMN archived_at {coltype}"}.items():
+        if name not in existing:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE invoices {ddl}"))
+
+
 def init_db() -> None:
     """Create all tables. (Alembic migrations come later; create_all is fine for the MVP.)"""
     # Import models so they register on Base.metadata before create_all.
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()

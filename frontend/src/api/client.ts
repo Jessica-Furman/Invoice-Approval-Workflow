@@ -21,6 +21,7 @@ export interface InvoiceSummary {
   total_invoice_cost: number | null;
   status: Status;
   routed_to: string | null;
+  archived_at: string | null;
   line_item_count: number;
   matched_line_count: number;
 }
@@ -89,24 +90,45 @@ export function invoiceExcelUrl(id: number): string {
   return `${baseURL}/api/invoices/${id}/export.xlsx`;
 }
 
-/** Generate the Coupa import CSV for a matched invoice and trigger a browser download.
- *  POST (not a plain link) because generating stamps coupa_csv_generated_at + logs an audit event. */
-export async function generateCoupaCsv(id: number): Promise<void> {
-  const res = await api.post(`/api/invoices/${id}/coupa.csv`, null, {
-    responseType: "blob",
-  });
+/** POST an endpoint that returns a file blob and trigger a browser download, honoring the
+ *  server's Content-Disposition filename (exposed via CORS) with a fallback. */
+async function downloadFromPost(url: string, fallbackName: string): Promise<void> {
+  const res = await api.post(url, null, { responseType: "blob" });
   const disposition = String(res.headers["content-disposition"] ?? "");
   const match = disposition.match(/filename="?([^"]+)"?/);
-  const filename = match?.[1] ?? `coupa_${id}.csv`;
+  const filename = match?.[1] ?? fallbackName;
 
-  const url = URL.createObjectURL(res.data as Blob);
+  const objectUrl = URL.createObjectURL(res.data as Blob);
   const a = document.createElement("a");
-  a.href = url;
+  a.href = objectUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(objectUrl);
+}
+
+/** Generate the Coupa import CSV for a MATCHED invoice and download it.
+ *  POST (not a plain link) because generating stamps coupa_csv_generated_at + logs an audit event. */
+export function generateCoupaCsv(id: number): Promise<void> {
+  return downloadFromPost(`/api/invoices/${id}/coupa.csv`, `coupa_${id}.csv`);
+}
+
+/** Generate a DRAFT Coupa CSV for a FLAGGED invoice — lines for the matched contractors only. */
+export function generateCoupaDraftCsv(id: number): Promise<void> {
+  return downloadFromPost(`/api/invoices/${id}/coupa-draft.csv`, `DRAFT_coupa_${id}.csv`);
+}
+
+/** Bulk-export every matched invoice: downloads a ZIP of one CSV each, then archives them server-side
+ *  (they clear from the board but stay in the DB / History). Powers the "Export All" slider. */
+export function bulkExportMatched(): Promise<void> {
+  return downloadFromPost(`/api/invoices/bulk-export-matched`, `coupa_export.zip`);
+}
+
+/** Every invoice ever (active + archived), for the History tab. Deleted invoices are excluded. */
+export async function fetchHistory(): Promise<InvoiceSummary[]> {
+  const { data } = await api.get<InvoiceSummary[]>("/api/history");
+  return data;
 }
 
 export async function fetchDashboard(): Promise<DashboardResponse> {

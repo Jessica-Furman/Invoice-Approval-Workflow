@@ -11,6 +11,7 @@ whether to fall back to the LLM.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -88,12 +89,18 @@ def parse_date(s: str | None) -> date | None:
 
 
 # --- header extraction -----------------------------------------------------
+_MONTH_NAMES = (
+    "January|February|March|April|May|June|July|August|September|October|November|December"
+    "|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
+)
+
 # Invoice numbers must contain at least one digit (avoids matching words like "AVASOFT").
 _INVOICE_NO_PATTERNS = [
     r"Invoice\s*(?:No|Number|#)\.?\s*:?\s*((?=[A-Z0-9\-/]*\d)[A-Z0-9][A-Z0-9\-/]{4,})",
     r"InvoiceNo\.?\s*:?\s*((?=[A-Z0-9\-/]*\d)[A-Z0-9][A-Z0-9\-/]{4,})",
     r"\b(INV[-\s]?\d{3,})\b",    # e.g. "INV-0137"
     r"\b([A-Z]{2,5}\d{8,})\b",   # fallback: e.g. AVASOFT's "REN0609202621882"
+    r"\bInvoice\s+#?\s*(\d{3,})\b",  # last resort: "INVOICE 1075" (Global Compass) — bare number
 ]
 _DATE_PATTERNS = [
     r"Invoice\s*Date\s*:?\s*(\d{1,2}[/-][A-Za-z0-9]{2,3}[/-]\d{2,4})",
@@ -101,7 +108,9 @@ _DATE_PATTERNS = [
     r"\bDate\b\s*:?\s*(\d{1,2}/\d{1,2}/\d{4})",
     r"\b(\d{1,2}/\d{1,2}/\d{4})\b",          # generic fallback (first date in doc)
     r"\b(\d{1,2}-[A-Za-z]{3}-\d{4})\b",
-    r"\b([A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s*\d{4})\b",  # month-name e.g. "Jun 1, 2026"
+    # Month-name date e.g. "Jun 1, 2026" / "JUNE 12, 2026". Anchored on a real month name so a zip code
+    # like "Utah 84045" can't be mistaken for a date.
+    rf"\b((?:{_MONTH_NAMES})\.?\s+\d{{1,2}},?\s+\d{{4}})\b",
 ]
 # Company-name lines usually carry a legal suffix; used as a vendor fallback.
 _COMPANY_SUFFIX_RE = re.compile(
@@ -193,7 +202,7 @@ def extract_header(text: str) -> dict:
         # "Acima Mobile App Timesheet - April 2026" -> that full calendar month.
         period = _header_month_period(text)
     return {
-        "vendor_name": vendor,
+        "vendor_name": _clean_vendor(vendor),
         "invoice_number": _first_match(_INVOICE_NO_PATTERNS, text),
         "date_received": parse_date(_first_match(_DATE_PATTERNS, text)),
         "payment_period": period,
@@ -218,10 +227,27 @@ def _billed_from_to_period(text: str) -> str | None:
     m = _BILLED_FROM_TO_RE.search(text)
     return f"{m.group(1)} - {m.group(2)}" if m else None
 
-_MONTH_NAMES = (
-    "January|February|March|April|May|June|July|August|September|October|November|December"
-    "|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
+# A trailing date/month descriptor tacked onto a vendor/title line, e.g. "… - April 2026" or
+# "Odyssey Information Services, Inc. 4/30/2026" — noise that shouldn't be part of the vendor name.
+_VENDOR_TRAILING_DATE_RE = re.compile(
+    rf"\s*[-–]?\s*(?:"
+    rf"(?:{_MONTH_NAMES})\.?\s+\d{{4}}"                 # April 2026
+    rf"|\d{{1,2}}[-/][A-Za-z]{{3}}[-/]\d{{2,4}}"        # 31-MAY-2026
+    rf"|\d{{1,2}}/\d{{1,2}}/\d{{2,4}}"                  # 4/30/2026
+    rf")\s*$",
+    re.IGNORECASE,
 )
+
+
+def _clean_vendor(name: str | None) -> str | None:
+    """Strip a trailing date/month-year descriptor (and a leftover separator) off a vendor name."""
+    if not name:
+        return name
+    prev = None
+    while prev != name:
+        prev = name
+        name = _VENDOR_TRAILING_DATE_RE.sub("", name).strip().rstrip("-–").strip()
+    return name or None
 # "May 2026 Services" / "April 2026 Service" — a month descriptor for the work billed.
 _MONTH_PERIOD_RE = re.compile(rf"\b({_MONTH_NAMES})\s+(\d{{4}})\s+Servic", re.IGNORECASE)
 # "Invoice for the month of April 2026" — tolerant of missing spaces (pdfplumber concatenates words).
@@ -723,6 +749,78 @@ def parse_qty_item_lines(text: str) -> list[ParsedLineItem]:
     return items
 
 
+# --- Cognizant "Name Location TimeType Efforts UOM Rate NetBilling" text rows ---------------
+# Cognizant invoices aren't ruled tables — each contractor is a single text line:
+#   "Pérez de la Cruz,Gerardo Onsite RTIME 144.00 MHR 70.00 10,080.00"
+# columns: Name(Last,First) | Location | TimeType | Efforts(hours) | UOM | Rate | Net Billing(amount).
+# The accented name often arrives mojibaked (é -> U+FFFD) from the text layer; repaired via OCR later
+# by repair_mojibake_names(). The trailing "<hours> <UOM> <rate> <amount>" block anchors the row.
+_COGNIZANT_LINE_RE = re.compile(
+    r"^(?P<prefix>.+?)\s+(?P<hours>[\d,]+\.\d{2})\s+(?P<uom>[A-Za-z]{2,4})\s+"
+    r"(?P<rate>[\d,]+\.\d{2})\s+(?P<amount>[\d,]+\.\d{2})\s*$"
+)
+# Units we accept in the UOM column (rejects e.g. a trailing currency "USD" on a totals line).
+_COGNIZANT_UOM = {"mhr", "hr", "hrs", "hour", "hours", "day", "days"}
+# Delivery-location / time-type tokens that trail the name before the numeric columns.
+_COGNIZANT_TRAIL = {"onsite", "offshore", "onshore", "offsite", "remote", "rtime", "otime", "ot", "time"}
+
+
+def parse_cognizant_lines(text: str) -> list[ParsedLineItem]:
+    """Parse Cognizant rows '<Name> <Location> <TimeType> <hours> <UOM> <rate> <amount>'.
+
+    Name keeps its raw 'Last, First' form (matching is order-insensitive downstream). Mojibaked
+    accents are left as U+FFFD here and fixed by repair_mojibake_names() using OCR.
+    """
+    items: list[ParsedLineItem] = []
+    for raw in text.splitlines():
+        m = _COGNIZANT_LINE_RE.match(raw.strip())
+        if not m or m.group("uom").lower() not in _COGNIZANT_UOM:
+            continue
+        toks = m.group("prefix").split()
+        while toks and toks[-1].lower().strip(".,") in _COGNIZANT_TRAIL:  # drop location/time-type
+            toks.pop()
+        name = " ".join(toks).strip()
+        if not name or not re.search(r"[A-Za-z�]", name):
+            continue
+        if re.match(r"(grand\s+total|sub\s*total|total|amount\s+due)\b", name, re.IGNORECASE):
+            continue
+        items.append(
+            ParsedLineItem(
+                contractor_name=name,
+                hours=clean_number(m.group("hours")),
+                rate=clean_number(m.group("rate")),
+                amount=clean_number(m.group("amount")),
+            )
+        )
+    return items
+
+
+def repair_mojibake_names(items: list[ParsedLineItem], ocr_text: str, threshold: float = 80.0) -> None:
+    """Replace contractor names the PDF text layer mangled (accented char -> U+FFFD) with the clean
+    version OCR reads. Each mojibake name is matched to its best-scoring OCR line by fuzzy ratio.
+
+    Mutates `items` in place. A no-op for names without U+FFFD. OCR reads glyphs like 'é' that the
+    embedded text layer can't map (Cognizant), so OCR is the source of truth for the accented form.
+    """
+    from rapidfuzz import fuzz
+
+    candidates = [l.strip() for l in ocr_text.splitlines() if l.strip() and "�" not in l]
+    if not candidates:
+        return
+    for li in items:
+        nm = li.contractor_name
+        if not nm or "�" not in nm:
+            continue
+        target = nm.replace("�", "").lower()
+        best, best_score = None, 0.0
+        for cand in candidates:
+            score = fuzz.ratio(target, cand.lower())
+            if score > best_score:
+                best, best_score = cand, score
+        if best and best_score >= threshold:
+            li.contractor_name = best
+
+
 # --- text-layout fallback (no real table) ----------------------------------
 # Matches lines like "Hours- Cristian Vargas- $65/hr" (Global Compass style rate lists).
 _RATE_LINE_RE = re.compile(r"Hours\s*-\s*([A-Za-z][A-Za-z .'\-]+?)\s*-\s*\$\s*(\d+(?:\.\d+)?)\s*/\s*hr", re.IGNORECASE)
@@ -753,6 +851,81 @@ def parse_rate_list_text(text: str) -> list[ParsedLineItem]:
                 hours=hours,
                 rate=clean_number(rate),
                 amount=amount,
+            )
+        )
+    return items
+
+
+# --- Global Compass "PAY PERIOD | BILLABLE | DESCRIPTION | TOTAL" invoices -------------------
+# Each contractor row carries its own pay period ("March 1-15, 2026"), a "Hours- <Name>[- ] $<rate>/hr",
+# "<N> hours", and a "$<amount>". pdfplumber jumbles the column order per row (and the dash before the
+# rate is inconsistent), so the generic rate-list parser mis-zips it. Instead we split the flattened
+# text on the pay-period markers and pull each contractor's fields out of the chunk that follows — which
+# also captures the per-line period the period-priority logic needs.
+# The trailing year is optional: on some GC invoices the period's year is orphaned onto a separate
+# line ("May 25- June 7," ... then "2026" lower down), so it isn't adjacent. When absent we fall back
+# to the invoice's year (the most common 4-digit year in the document).
+_GC_PERIOD_RE = re.compile(
+    rf"({_MONTH_NAMES})\s+(\d{{1,2}})\s*[-–]\s*(?:({_MONTH_NAMES})\s+)?(\d{{1,2}}),?(?:\s*(\d{{4}}))?",
+    re.IGNORECASE,
+)
+_GC_NAME_RE = re.compile(r"Hours\s*-\s*(.+?)\s*-?\s*\$\s*\d", re.IGNORECASE)
+_GC_RATE_RE = re.compile(r"\$\s*(\d+(?:\.\d+)?)\s*/\s*hr", re.IGNORECASE)
+_GC_HOURS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*hours", re.IGNORECASE)
+_GC_AMOUNT_RE = re.compile(r"\$\s*([\d,]+\.\d{2})")
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")
+
+
+def _gc_period_dates(m: re.Match, default_year: str | None) -> tuple[date | None, date | None]:
+    """Resolve a pay-period match to (start, end). Handles same-month ('March 1-15, 2026') and
+    cross-month ('May 25 - June 7, 2026') ranges; the year applies to both ends and falls back to the
+    document year when not printed next to the period."""
+    mon1, d1, mon2, d2, yr = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5)
+    yr = yr or default_year
+    if not yr:
+        return None, None
+    return parse_date(f"{mon1} {d1}, {yr}"), parse_date(f"{mon2 or mon1} {d2}, {yr}")
+
+
+def parse_global_compass(text: str) -> list[ParsedLineItem]:
+    """Parse Global Compass rate-list invoices, one line item per contractor with its pay period."""
+    flat = re.sub(r"\s+", " ", text)
+    periods = list(_GC_PERIOD_RE.finditer(flat))
+    if not periods:
+        return []
+    # Don't let the grand total ("TOTAL DUE $...") be parsed as a contractor.
+    cut = flat.lower().find("total due")
+    end_cut = cut if cut != -1 else len(flat)
+    # Fallback year for periods whose year is orphaned on another line: the doc's most common year.
+    years = _YEAR_RE.findall(flat)
+    default_year = Counter(years).most_common(1)[0][0] if years else None
+
+    items: list[ParsedLineItem] = []
+    for i, m in enumerate(periods):
+        rec_end = periods[i + 1].start() if i + 1 < len(periods) else end_cut
+        record = flat[m.end():rec_end]
+        nm = _GC_NAME_RE.search(record)
+        if not nm:
+            continue
+        name = nm.group(1).strip().rstrip("-").strip()
+        if not name:
+            continue
+        rate_m, hours_m, amount_m = (
+            _GC_RATE_RE.search(record), _GC_HOURS_RE.search(record), _GC_AMOUNT_RE.search(record)
+        )
+        start, end = _gc_period_dates(m, default_year)
+        extra: dict = {}
+        if start:
+            extra["period_start"] = start.isoformat()
+        if end:
+            extra["period_end"] = end.isoformat()
+        items.append(
+            ParsedLineItem(
+                contractor_name=name,
+                hours=clean_number(hours_m.group(1)) if hours_m else None,
+                rate=clean_number(rate_m.group(1)) if rate_m else None,
+                amount=clean_number(amount_m.group(1)) if amount_m else None,
+                extra=extra,
             )
         )
     return items
@@ -849,7 +1022,11 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
 
     header = extract_header(text)
     items, item_warnings = extract_line_items_from_tables(tables)
-    # Fallback for text-layout invoices (no real table) such as Global Compass's "Hours- Name- $rate/hr".
+    # Global Compass: per-line PAY PERIOD + "Hours- Name- $rate/hr  N hours  $amount". Dedicated parser
+    # keeps each contractor's period/hours/rate/amount aligned (the generic rate-list parser mis-zips it).
+    if not items and re.search(r"global\s+compass", text, re.IGNORECASE):
+        items = parse_global_compass(text)
+    # Fallback for other text-layout rate-list invoices (no real table).
     if not items:
         items = parse_rate_list_text(text)
     # Sogeti/Capgemini "Name ...Billable N Hours @ rate" text lines (table extractor reads nothing).
@@ -858,6 +1035,10 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
     # Odyssey "Qty Item Rate Amount" invoices where the data row is plain text under the header.
     if not items:
         items = parse_qty_item_lines(text)
+    # Cognizant text-row line items ("<Name> Onsite RTIME <hours> MHR <rate> <amount>"). Gated on the
+    # vendor so the loose row pattern can't misfire on other invoices.
+    if not items and re.search(r"cognizant", text, re.IGNORECASE):
+        items = parse_cognizant_lines(text)
     # Multi-contractor "Services Rendered for:" billing (Gravity IT) where standard table parsing only
     # catches one row — use it when it recovers more contractors.
     if "services rendered for" in text.lower():

@@ -10,13 +10,19 @@ from pathlib import Path
 import pytest
 
 from app.services.parsing import parse_invoice
+from app.schemas import ParsedLineItem
+from app.services.ingestion import _invoice_no_from_filename
 from app.services.parsing.rules import (
     clean_number,
     extract_person_name,
     parse_billable_lines,
+    parse_cognizant_lines,
+    parse_global_compass,
     parse_qty_item_lines,
     parse_services_rendered,
+    repair_mojibake_names,
     _billed_from_to_period,
+    _clean_vendor,
     _header_month_period,
     _month_of_period,
 )
@@ -162,6 +168,130 @@ def test_extract_person_name_after_project_and_dates():
     )
     # Name still found when it comes BEFORE the date (must not regress).
     assert extract_person_name("Noorul Sarfaraz 04/26/2026 - 05/30/2026") == "Noorul Sarfaraz"
+
+
+def test_parse_cognizant_lines():
+    # Cognizant text rows: "<Name(Last,First)> <Location> <TimeType> <hours> <UOM> <rate> <amount>".
+    # The accented name arrives mojibaked from the text layer (é -> U+FFFD); repaired separately.
+    text = (
+        "Name Efforts UOM Rate Net Billing\n"
+        "Services rendered for Rent-A--Scrum Master-MAY 2026\n"
+        "P�rez de la Cruz,Gerardo Onsite RTIME 144.00 MHR 70.00 10,080.00\n"
+        "Smith,John Offshore RTIME 160.00 MHR 55.00 8,800.00\n"
+        "Total Amount Due: 10,080.00 USD\n"
+    )
+    items = parse_cognizant_lines(text)
+    assert len(items) == 2  # the "Total Amount Due" line (UOM 'USD') must NOT match
+    first = items[0]
+    assert first.contractor_name == "P�rez de la Cruz,Gerardo"  # location/time-type stripped
+    assert first.hours == 144.0 and first.rate == 70.0 and first.amount == 10080.0
+    assert items[1].contractor_name == "Smith,John" and items[1].hours == 160.0
+
+
+def test_repair_mojibake_names_uses_ocr():
+    # OCR reads accents the text layer mangled — fuzzy-match the mojibake name to the clean OCR line.
+    items = [ParsedLineItem(contractor_name="P�rez de la Cruz,Gerardo", hours=144.0)]
+    ocr_text = "Some header\nPérez de la Cruz,Gerardo\n144.00\nTotal Amount Due:\n"
+    repair_mojibake_names(items, ocr_text)
+    assert items[0].contractor_name == "Pérez de la Cruz,Gerardo"
+
+
+def test_repair_mojibake_names_noop_without_replacement_char():
+    # Clean names are left untouched (no OCR substitution).
+    items = [ParsedLineItem(contractor_name="John Smith", hours=10.0)]
+    repair_mojibake_names(items, "Jon Smithe\nJohn Smithers")
+    assert items[0].contractor_name == "John Smith"
+
+
+def test_parse_global_compass_captures_period_per_line():
+    # pdfplumber jumbles Global Compass column order per row: period+hours then name+amount on one row,
+    # everything on one line on another, and the dash before the rate is inconsistent (or absent).
+    text = (
+        "Global Compass Technologies, LLC\n"
+        "PAY PERIOD BILLABLE DESCRIPTION TOTAL\n"
+        "March 1-15, 2026 80 hours\n"
+        "Hours- Crisitan Vargas- $65/hr $5,200.00\n"
+        "March 1-15, 2026 Hours- David Auza $65/hr 80 hours $5,200.00\n"  # no dash before $
+        "March 1-15, 2026 Hours- Emilio Garza - $75/hr 80 hours $6,000.00\n"  # spaced dash
+        "March 1-15, 2026 Hours- Javier Olivares- $64/hr 73 hours $4,672.00\n"  # partial hours
+        "TOTAL DUE $21,072.00\n"
+    )
+    items = parse_global_compass(text)
+    assert [li.contractor_name for li in items] == [
+        "Crisitan Vargas", "David Auza", "Emilio Garza", "Javier Olivares",
+    ]
+    assert [li.rate for li in items] == [65.0, 65.0, 75.0, 64.0]  # name/rate stay aligned
+    # The "David Auza" row (no dash) is NOT dropped, and hours/amount don't desync.
+    david = items[1]
+    assert david.hours == 80.0 and david.amount == 5200.0
+    assert items[3].hours == 73.0  # Javier's partial hours
+    # Every line carries the pay period from its PAY PERIOD column.
+    for li in items:
+        assert li.extra["period_start"] == "2026-03-01"
+        assert li.extra["period_end"] == "2026-03-15"
+    # "TOTAL DUE" is not parsed as a contractor.
+    assert all("total" not in (li.contractor_name or "").lower() for li in items)
+
+
+def test_parse_global_compass_orphaned_year():
+    # On some GC invoices the period's year is split onto its own line ("May 25- June 7," ... "2026"),
+    # so it isn't adjacent. The parser must still resolve it (falling back to the document year).
+    text = (
+        "Global Compass Technologies, LLC\n"
+        "INVOICE 1081 JUNE 12, 2026\n"
+        "PAY PERIOD BILLABLE DESCRIPTION TOTAL\n"
+        "May 25- June 7, 64 hours\n"
+        "Hours- Crisitan Vargas- $65/hr $4,160.00\n"
+        "2026\n"
+        "May 25- June 7,\n"
+        "Hours- David Tello- $70/hr 80 hours $5,600.00\n"
+        "2026\n"
+        "TOTAL DUE $9,760.00\n"
+    )
+    items = parse_global_compass(text)
+    assert [li.contractor_name for li in items] == ["Crisitan Vargas", "David Tello"]
+    assert items[0].hours == 64.0 and items[1].hours == 80.0
+    for li in items:
+        assert li.extra["period_start"] == "2026-05-25"
+        assert li.extra["period_end"] == "2026-06-07"
+
+
+def test_date_pattern_ignores_zip_code():
+    from app.services.parsing.rules import extract_header
+
+    # "Saratoga Springs, Utah 84045" must NOT be read as a date; the real date is the all-caps month.
+    text = "Global Compass Technologies, LLC\nSaratoga Springs, Utah 84045\nINVOICE 1081 JUNE 12, 2026\n"
+    assert str(extract_header(text)["date_received"]) == "2026-06-12"
+
+
+def test_parse_global_compass_cross_month_period():
+    text = (
+        "Global Compass Technologies, LLC\n"
+        "May 25 - June 7, 2026 Hours- Marcos Yu- $80/hr 80 hours $6,400.00\n"
+        "TOTAL DUE $6,400.00\n"
+    )
+    items = parse_global_compass(text)
+    assert len(items) == 1
+    assert items[0].extra["period_start"] == "2026-05-25"
+    assert items[0].extra["period_end"] == "2026-06-07"
+
+
+def test_clean_vendor_strips_trailing_date_descriptors():
+    assert _clean_vendor("Acima Mobile App Timesheet - April 2026") == "Acima Mobile App Timesheet"
+    assert _clean_vendor("Odyssey Information Services, Inc. 4/30/2026") == "Odyssey Information Services, Inc."
+    assert _clean_vendor("Cognizant Worldwide Limited 31-MAY-2026") == "Cognizant Worldwide Limited"
+    # No trailing date -> unchanged.
+    assert _clean_vendor("AVASOFT Inc.") == "AVASOFT Inc."
+    assert _clean_vendor(None) is None
+
+
+def test_invoice_no_from_filename():
+    # Timesheets with no printed invoice number fall back to the leading code in the filename.
+    assert _invoice_no_from_filename("ACI0501202621760_Invoice - Acima Mobile App April 2026") == "ACI0501202621760"
+    assert _invoice_no_from_filename("AVASOFT_REN0608202621879") == "REN0608202621879"
+    # No code -> first token with a digit, else the whole stem.
+    assert _invoice_no_from_filename("timesheet 2026 final") == "2026"
+    assert _invoice_no_from_filename("plain-name") == "plain-name"
 
 
 def test_clean_number_recovers_mangled_values():

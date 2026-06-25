@@ -110,7 +110,7 @@ Use `Account Allocation` rows only if one invoice line needs to be split across 
 | `Amount` | Dollar amount allocated to this account. |
 | `Percent` | Percent allocated to this account. Use either amount or percent depending on Coupa setup. |
 | `Account Code` | Full account code if available. |
-| `Account Segment 1` | Company code. Company code id determined based on company the contractor works for. If the company is RAC then company code = `5`, if company is ACIMA then company code = `67` |
+| `Account Segment 1` | Company code. Company code id determined based on company the contractor works for. The company for each project is in the file "Company_by_Project" under the coloumn p labeled "line of business". If the company is RAC then company code = `5`, if company is ACIMA then company code = `67` |
 | `Account Segment 2` | Cost Center. If RAC then = `H0003`, If ACIMA then = `AC000` |
 | `Account Segment 3` | CAPEX or OPEX code. If CAPEX then code = `246010`, If OPEX then code = `667070` |
 | `Account Segment 4` | Segment value configured by Upbound/Coupa. |
@@ -127,7 +127,7 @@ The accounting team or internal source of truth must provide these values before
 | Contractor name | Supplier mapping and/or invoice description. |
 | Project name | Account segment, billing note, or tag. |
 | Project ID / Budget ID | Account segment or account code. |
-| Department code | Account segment. |
+| Department code | Account dddsegment. |
 | Cost center | Account segment. |
 | CapEx vs OpEx | Account segment, category, tag, or custom field if configured. |
 | Manager / approver | Requester fields or invoice header assignment. |
