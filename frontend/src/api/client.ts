@@ -59,6 +59,7 @@ export interface ClarityProject {
   project_id: string | null;
   project_name: string | null;
   budget_id: string | null;
+  cost_code: string | null;
   capex_opex: string | null;
   cost_center: string | null;
   vendor: string | null;

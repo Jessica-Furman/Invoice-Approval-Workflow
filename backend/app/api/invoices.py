@@ -20,7 +20,14 @@ from app.services.coupa import coupa_csv_bytes, coupa_csv_filename, project_acco
 from app.services.export_excel import workbook_from_detail
 from app.services.ingestion import ingest_pdf
 from app.services.storage import LocalStorage
-from app.services.matching import ClarityIndex, _line_period, match_all, match_invoice
+from app.services.matching import (
+    ClarityIndex,
+    _counts_toward_billable,
+    _line_period,
+    countable_status_filter,
+    match_all,
+    match_invoice,
+)
 from app.services.routing import remove_from_inboxes, route_all, route_invoice
 from app.schemas import (
     ClarityEntryOut,
@@ -179,7 +186,7 @@ def line_clarity_breakdown(
             time_sheet_status=r.time_sheet_status,
             is_time_off=r.is_time_off,
             is_posted=r.is_posted,
-            included=bool(r.is_posted and not r.is_time_off),
+            included=bool(_counts_toward_billable(r) and not r.is_time_off),  # Posted or Submitted
         )
         for r in rows
     ]
@@ -395,7 +402,7 @@ def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDet
         ts_query = select(models.ClarityTimesheet).where(
             models.ClarityTimesheet.contractor_name_normalized.in_(matched_norms),
             models.ClarityTimesheet.is_time_off.is_(False),
-            models.ClarityTimesheet.is_posted.is_(True),
+            countable_status_filter(),  # Posted OR Submitted
         )
         if inv.payment_period_start and inv.payment_period_end:
             ts_query = ts_query.where(
@@ -434,6 +441,7 @@ def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDet
     for p in projects:
         acct = project_accounting(p.project_id, p.project_name)
         out = ClarityProjectOut.model_validate(p)
+        out.cost_code = acct["cost_code"]   # company code: RAC -> 5, ACIMA -> 67
         out.cost_center = acct["cost_center"] or p.cost_center
         out.lob = acct["lob"] or p.lob
         out.vendor = inv.vendor_name or p.vendor

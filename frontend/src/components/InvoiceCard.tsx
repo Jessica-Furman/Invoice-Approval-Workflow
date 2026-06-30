@@ -9,6 +9,14 @@ const actionIcon: Record<string, JSX.Element> = {
   processing_failed: <Eye className="h-4 w-4 text-slate-500" />,
 };
 
+// Colored left outline per status — green for matched, deep yellow for flagged.
+const accentBorder: Record<string, string> = {
+  matched: "border-l-emerald-500",
+  flagged: "border-l-amber-500",
+  needs_manual_review: "border-l-amber-500",
+  processing_failed: "border-l-slate-300",
+};
+
 export function InvoiceCard({
   invoice,
   onClick,
@@ -19,7 +27,7 @@ export function InvoiceCard({
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-lime hover:shadow-md"
+      className={`w-full rounded-xl border border-slate-200 border-l-4 ${accentBorder[invoice.status] ?? "border-l-slate-300"} bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2 hover:ring-brand-lime/40`}
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-400">

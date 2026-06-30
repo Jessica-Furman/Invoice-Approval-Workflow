@@ -64,7 +64,7 @@ function MismatchRow({ r }: { r: MismatchReasonT }) {
   const hasValues = r.invoice_value != null || r.clarity_value != null;
   return (
     <div className="flex items-start gap-2.5 px-3 py-2.5">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-rose-500" />
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-semibold text-slate-800">{who ?? label}</span>
@@ -145,13 +145,18 @@ function ClarityBreakdown({ invoiceId, lineId }: { invoiceId: number; lineId: nu
   );
 }
 
-/** A single aligned comparison row: invoice line on the left, matched Clarity on the right. */
+/** A single aligned comparison row: invoice line on the left, matched Clarity on the right.
+ *  `clarityDuplicate` = this Clarity contractor's total was already shown on an earlier row
+ *  (single-contractor invoices aggregate every line to the same person), so its Clarity cells are
+ *  blanked here to avoid double-showing — and double-counting — the same hours. */
 function ComparisonRow({
   invoiceId,
   li,
+  clarityDuplicate,
 }: {
   invoiceId: number;
   li: LineItem;
+  clarityDuplicate: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const diff = li.diff ?? {};
@@ -163,7 +168,7 @@ function ComparisonRow({
 
   return (
     <>
-      <tr className={`border-b border-slate-100 ${bad ? "bg-rose-50" : ""}`}>
+      <tr className={`border-b border-slate-100 ${bad ? "bg-amber-50" : ""}`}>
         {/* Invoice side */}
         <td className="py-2 pl-1 text-slate-700">{li.contractor_name}</td>
         <td className="py-2 text-right text-slate-600">{li.hours ?? "—"}</td>
@@ -173,7 +178,9 @@ function ComparisonRow({
         <td className="w-px bg-slate-200 p-0" />
         {/* Clarity side */}
         <td className="py-2 pl-3">
-          {resolved ? (
+          {clarityDuplicate ? (
+            <span className="text-xs italic text-slate-400">↳ counted above</span>
+          ) : resolved ? (
             <button
               onClick={() => setOpen((o) => !o)}
               className="flex items-center gap-1 text-left text-slate-700 hover:text-blue-700"
@@ -182,19 +189,21 @@ function ComparisonRow({
               {clarityName ?? li.contractor_name}
             </button>
           ) : (
-            <span className="text-rose-500">no match</span>
+            <span className="text-amber-600">no match</span>
           )}
         </td>
-        <td className="py-2 text-right text-slate-600">{clarityHours ?? "—"}</td>
+        <td className="py-2 text-right text-slate-600">
+          {clarityDuplicate ? "" : clarityHours ?? "—"}
+        </td>
         <td
           className={`py-2 pr-1 text-right font-mono ${
-            delta && Math.abs(delta) > 0.001 ? "text-rose-600" : "text-slate-400"
+            !clarityDuplicate && delta && Math.abs(delta) > 0.001 ? "text-amber-700" : "text-slate-400"
           }`}
         >
-          {delta === null ? "—" : delta > 0 ? `+${delta}` : delta}
+          {clarityDuplicate ? "" : delta === null ? "—" : delta > 0 ? `+${delta}` : delta}
         </td>
       </tr>
-      {open && (
+      {open && !clarityDuplicate && (
         <tr>
           <td colSpan={7} className="p-0">
             <ClarityBreakdown invoiceId={invoiceId} lineId={li.id} />
@@ -205,7 +214,36 @@ function ComparisonRow({
   );
 }
 
+/** Sum of Clarity hours counting each Clarity contractor once — so a single-contractor invoice whose
+ *  lines all aggregate to the same person shows that person's total once, not once per invoice line. */
+function distinctClarityHours(items: LineItem[]): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const li of items) {
+    const diff = li.diff ?? {};
+    const key = str(diff["clarity_name"]);
+    const hours = num(diff["clarity_hours"]) ?? 0;
+    if (key === null) {
+      total += hours; // unresolved line — keep its own value (typically 0)
+    } else if (!seen.has(key)) {
+      seen.add(key);
+      total += hours;
+    }
+  }
+  return total;
+}
+
 function ComparisonTable({ data }: { data: InvoiceDetailT }) {
+  // Mark rows whose Clarity contractor already appeared above (aggregated single-contractor invoices),
+  // so the Clarity column shows each contractor's total exactly once.
+  const seenClarity = new Set<string>();
+  const rows = data.line_items.map((li) => {
+    const key = str((li.diff ?? {})["clarity_name"]);
+    const duplicate = key !== null && seenClarity.has(key);
+    if (key !== null) seenClarity.add(key);
+    return { li, duplicate };
+  });
+
   return (
     <table className="w-full border-collapse text-sm">
       <thead>
@@ -230,8 +268,8 @@ function ComparisonTable({ data }: { data: InvoiceDetailT }) {
         </tr>
       </thead>
       <tbody>
-        {data.line_items.map((li) => (
-          <ComparisonRow key={li.id} invoiceId={data.id} li={li} />
+        {rows.map(({ li, duplicate }) => (
+          <ComparisonRow key={li.id} invoiceId={data.id} li={li} clarityDuplicate={duplicate} />
         ))}
         <tr className="font-semibold">
           <td className="py-2 pl-1">Total</td>
@@ -240,9 +278,7 @@ function ComparisonTable({ data }: { data: InvoiceDetailT }) {
           <td className="py-2 text-right font-mono">{money(sum(data.line_items.map((l) => l.amount)))}</td>
           <td className="p-0" />
           <td className="py-2 pl-3" />
-          <td className="py-2 text-right">
-            {sum(data.line_items.map((l) => num((l.diff ?? {})["clarity_hours"])))}
-          </td>
+          <td className="py-2 text-right">{distinctClarityHours(data.line_items)}</td>
           <td />
         </tr>
       </tbody>
@@ -257,7 +293,7 @@ function ProjectTable({ rows }: { rows: ClarityProject[] }) {
         <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
           <th className="py-2 font-medium">Type</th>
           <th className="py-2 font-medium">Project</th>
-          <th className="py-2 font-medium">Budget ID</th>
+          <th className="py-2 font-medium">Cost Code</th>
           <th className="py-2 font-medium">Cost Center</th>
         </tr>
       </thead>
@@ -266,7 +302,7 @@ function ProjectTable({ rows }: { rows: ClarityProject[] }) {
           <tr key={p.id} className="border-b border-slate-100">
             <td className="py-2 text-slate-700">{p.capex_opex ?? "—"}</td>
             <td className="py-2 text-slate-600">{p.project_name ?? p.project_id}</td>
-            <td className="py-2 text-slate-600">{p.budget_id ?? "—"}</td>
+            <td className="py-2 text-slate-600">{p.cost_code ?? "—"}</td>
             <td className="py-2 text-slate-600">{p.cost_center ?? "—"}</td>
           </tr>
         ))}
@@ -362,11 +398,11 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
             {data.mismatch_reasons.length > 0 && (
               <div className="mb-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
-                  <AlertTriangle className="h-4 w-4 text-rose-500" />
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                     What didn’t match
                   </span>
-                  <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-600">
+                  <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
                     {data.mismatch_reasons.length}
                   </span>
                 </div>

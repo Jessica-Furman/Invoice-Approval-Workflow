@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from rapidfuzz import fuzz
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import models
@@ -27,6 +27,26 @@ FUZZY_STRONG = 80             # accept a fuzzy name match outright at/above this
 FUZZY_ANCHORED_MIN = 65       # accept down to this similarity IF the names share a real component
 HOURS_ABS_TOLERANCE = 1.0     # hours
 HOURS_PCT_TOLERANCE = 0.02    # 2%
+
+# Time Sheet Statuses whose hours count toward the billable total. Per the user: ONLY "Posted" and
+# "Submitted" count; every other status (Open, Approved, Rejected, …) is excluded.
+COUNTED_STATUSES = {"posted", "submitted"}
+
+
+def _counts_toward_billable(r: models.ClarityTimesheet) -> bool:
+    """True if a timesheet row's hours count (status Posted or Submitted). Time-off is handled separately."""
+    if r.is_posted:  # is_posted is derived from status == "Posted"
+        return True
+    return (r.time_sheet_status or "").strip().lower() in COUNTED_STATUSES
+
+
+def countable_status_filter():
+    """SQLAlchemy predicate matching rows whose status counts (Posted or Submitted) — for queries that
+    re-derive the billable set (UI detail, Coupa company split). Mirrors `_counts_toward_billable`."""
+    return or_(
+        models.ClarityTimesheet.is_posted.is_(True),
+        func.lower(func.trim(models.ClarityTimesheet.time_sheet_status)).in_(COUNTED_STATUSES),
+    )
 
 
 def _name_similarity(a: str, b: str) -> float:
@@ -142,33 +162,37 @@ def _line_period(li: models.InvoiceLineItem, invoice: models.Invoice) -> tuple[d
 class ClarityHours:
     """Result of summing a contractor's Clarity hours for an invoice period."""
 
-    posted: float                              # billable POSTED hours (what we match against)
-    rows: list[models.ClarityTimesheet]        # the posted rows used
+    counted: float                             # billable COUNTED hours (Posted or Submitted) — matched against
+    rows: list[models.ClarityTimesheet]        # the counted rows used
     period_constrained: bool                   # False if no invoice period was available
-    pending: float = 0.0                       # billable hours SUBMITTED but not yet posted (same window)
+    pending: float = 0.0                       # billable hours in the window whose status does NOT count
 
 
 def _clarity_hours_for(
     rows: list[models.ClarityTimesheet], inv_start: date | None, inv_end: date | None
 ) -> ClarityHours:
     """Sum billable Clarity hours for the contractor:
-    - only POSTED timesheets (Time Sheet Status == "Posted"),
+    - only COUNTED timesheets (Time Sheet Status == "Posted" OR "Submitted"),
     - EXCLUDING time-off entries (Time Off / PTO / timeoff), and
     - restricted to entries whose Date Worked falls within the invoice period (when known).
 
-    Also sums billable but NOT-yet-posted hours (e.g. Time Sheet Status "Submitted") in the same
-    window so the caller can distinguish "real discrepancy" from "Clarity hasn't posted yet".
+    Also sums billable hours in the same window whose status does NOT count (e.g. Open/Approved) so the
+    caller can explain a shortfall as time that isn't posted or submitted yet, vs a true discrepancy.
     """
     def _in_window(r: models.ClarityTimesheet) -> bool:
         if inv_start and inv_end:
             return bool(r.date_worked and inv_start <= r.date_worked <= inv_end)
         return True
 
-    posted_rows = [r for r in rows if r.is_posted and not r.is_time_off and _in_window(r)]
-    pending = sum(r.hours or 0 for r in rows if not r.is_posted and not r.is_time_off and _in_window(r))
+    counted_rows = [r for r in rows if _counts_toward_billable(r) and not r.is_time_off and _in_window(r)]
+    pending = sum(
+        r.hours or 0
+        for r in rows
+        if not _counts_toward_billable(r) and not r.is_time_off and _in_window(r)
+    )
     return ClarityHours(
-        posted=sum(r.hours or 0 for r in posted_rows),
-        rows=posted_rows,
+        counted=sum(r.hours or 0 for r in counted_rows),
+        rows=counted_rows,
         period_constrained=bool(inv_start and inv_end),
         pending=round(pending, 2),
     )
@@ -180,14 +204,14 @@ def _hours_reason(
 ) -> dict:
     """Build a mismatch reason for an hours discrepancy.
 
-    When the shortfall is explained by time that's submitted-but-not-yet-posted in Clarity, say so
-    explicitly — it's a timing issue (await Clarity posting), not a true hours discrepancy.
+    When the shortfall is explained by time whose status doesn't count yet (not Posted or Submitted),
+    say so explicitly — it's a timing issue (await Clarity posting), not a true hours discrepancy.
     """
     inv_r, cl_r = round(inv_hours, 2), round(clarity_hours, 2)
     if pending_posting:
         reason = (
-            f"{prefix}{name}: invoice bills {inv_r} hrs but only {cl_r} are posted in Clarity for "
-            f"this period; {round(pending, 2)} more hrs are submitted/awaiting posting. "
+            f"{prefix}{name}: invoice bills {inv_r} hrs but only {cl_r} are posted/submitted in Clarity "
+            f"for this period; {round(pending, 2)} more hrs are logged but not yet posted or submitted. "
             f"Reconcile once Clarity posts."
         )
     else:
@@ -224,9 +248,9 @@ def match_invoice(db: Session, invoice: models.Invoice, index: ClarityIndex) -> 
         rows = index.by_norm[norm]
         # Use the invoice-level period (per-line week dates on these split invoices can be unreliable).
         ch = _clarity_hours_for(rows, invoice.payment_period_start, invoice.payment_period_end)
-        clarity_hours, used_rows = ch.posted, ch.rows
-        # Link to a posted row if any, else any row of the resolved contractor — so the UI drill-down
-        # can still show this person's entries (e.g. submitted-but-not-posted) when 0 posted hours.
+        clarity_hours, used_rows = ch.counted, ch.rows
+        # Link to a counted row if any, else any row of the resolved contractor — so the UI drill-down
+        # can still show this person's entries (e.g. uncounted statuses) when 0 counted hours.
         link_row = used_rows[0] if used_rows else (rows[0] if rows else None)
         clarity_name = link_row.contractor_name if link_row else None
         inv_total = sum((li.hours or 0) for li in items)
@@ -275,9 +299,9 @@ def match_invoice(db: Session, invoice: models.Invoice, index: ClarityIndex) -> 
         # Prefer the line item's own period (TCS puts it per line); fall back to the invoice period.
         line_start, line_end = _line_period(li, invoice)
         ch = _clarity_hours_for(rows, line_start, line_end)
-        clarity_hours, used_rows = ch.posted, ch.rows
-        # Link to a posted row if any, else any row of the resolved contractor — so the UI drill-down
-        # still shows this person's entries (e.g. submitted-but-not-posted) when 0 posted hours.
+        clarity_hours, used_rows = ch.counted, ch.rows
+        # Link to a counted row if any, else any row of the resolved contractor — so the UI drill-down
+        # still shows this person's entries (e.g. uncounted statuses) when 0 counted hours.
         link_row = used_rows[0] if used_rows else (rows[0] if rows else None)
         li.matched_clarity_id = link_row.id if link_row else None
         inv_hours = li.hours

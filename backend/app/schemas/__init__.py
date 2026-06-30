@@ -94,6 +94,7 @@ class ClarityProjectOut(BaseModel):
     project_id: str | None = None
     project_name: str | None = None
     budget_id: str | None = None
+    cost_code: str | None = None       # company code: RAC -> 5, ACIMA -> 67
     capex_opex: str | None = None
     cost_center: str | None = None
     vendor: str | None = None

@@ -125,6 +125,8 @@ _TOTAL_PATTERNS = [
     r"Gross\s*Value\s*:?\s*\$?\s*([0-9][0-9 .,]*\d)",
     r"Total\s*(?:Amount|Due)\s*(?:Due)?\s*:?\s*\$?\s*([0-9][0-9, ]*\.?\d*)",
     r"Amount\s*Due[^\$\d]*\$?\s*([0-9][0-9, ]*\.?\d*)",
+    # NextStep & similar: the bold grand total prints as "BALANCE DUE $7,030.00".
+    r"Balance\s*Due\s*:?\s*\$?\s*([0-9][0-9, ]*\.?\d*)",
     r"\bTotal\b\s*\(USD\)\s*([0-9][0-9, ]*\.?\d*)",
     r"\bTotal\b\s*\$?\s*([0-9][0-9, ]*\.\d{2})",
     r"\bTotal\b\s*\$\s*([0-9][0-9, ]*)",
@@ -749,6 +751,71 @@ def parse_qty_item_lines(text: str) -> list[ParsedLineItem]:
     return items
 
 
+# --- "DESCRIPTION | QTY | RATE | AMOUNT" text invoices (NextStep Recruiting & same shape) ----
+# A clean columnar invoice whose rows live in the text layer rather than a ruled table, so pdfplumber
+# only reads the header. The header is "DESCRIPTION QTY RATE AMOUNT" and each contractor row is:
+#   "Stephen Dickison-Scrum Master-Reg Hours (5/31/26-6/6/26) 34 95.00 3,230.00"
+# i.e. under DESCRIPTION the contractor name leads, followed by role/hours-type descriptors and the
+# worked period in parentheses; QTY is the hours, RATE the unit rate, AMOUNT the line total. The
+# trailing "<hours> <rate.dd> <amount.dd>" triple anchors each row, so footer lines that carry only one
+# number ("BALANCE DUE $7,030.00") and bank-detail lines are ignored. The period in parentheses is
+# captured per line so the invoice's full span is recovered even though there's no header "Period:".
+_DESC_QTY_HEADER_RE = re.compile(r"\bDescription\b.*\bQ(?:ty|uantity)\b.*\bAmount\b", re.IGNORECASE)
+_DESC_QTY_ROW_RE = re.compile(
+    r"^(?P<desc>.+?)\s+(?P<qty>\d+(?:\.\d+)?)\s+(?P<rate>[\d,]+\.\d{2})\s+\$?\s*(?P<amount>[\d,]+\.\d{2})\s*$"
+)
+
+
+def _desc_qty_name(desc: str) -> str:
+    """Recover the contractor name from a 'Name-Role-HoursType (period)' description.
+
+    The name leads the description; role/hours-type text follows after a hyphen and the worked period
+    sits in parentheses. Take the text before the parenthetical and before the first hyphen, then tidy
+    it through the person-name detector (which also trims any role words on a space-separated form)."""
+    head = re.split(r"\(", desc, maxsplit=1)[0]          # drop the "(period)" tail
+    head = re.split(r"\s*[-–]\s*", head, maxsplit=1)[0]  # text before the first hyphen (role separator)
+    return _best_name_in(head) or head.strip()
+
+
+def parse_desc_qty_rate_amount(text: str) -> list[ParsedLineItem]:
+    """Parse 'DESCRIPTION QTY RATE AMOUNT' invoices (NextStep Recruiting & same-shape vendors).
+
+    QTY is the hours worked, RATE the unit rate, AMOUNT the line total. Gated on the
+    "DESCRIPTION … QTY … AMOUNT" header so it only runs for this layout, and only on lines ending in a
+    "<hours> <rate> <amount>" numeric triple so headers, footers and bank-detail lines are skipped.
+    """
+    if not _DESC_QTY_HEADER_RE.search(text):
+        return []
+    items: list[ParsedLineItem] = []
+    for raw in text.splitlines():
+        m = _DESC_QTY_ROW_RE.match(raw.strip())
+        if not m:
+            continue
+        desc = m.group("desc").strip()
+        name = _desc_qty_name(desc)
+        if not name or not re.search(r"[A-Za-z]", name):
+            continue
+        if re.match(r"(grand\s+total|sub\s*total|total|balance(\s+due)?|amount\s+due|tax)\b",
+                    name, re.IGNORECASE):
+            continue
+        ps, pe = _line_period(desc, None, None)
+        extra: dict = {}
+        if ps:
+            extra["period_start"] = ps.isoformat()
+        if pe:
+            extra["period_end"] = pe.isoformat()
+        items.append(
+            ParsedLineItem(
+                contractor_name=name,
+                hours=clean_number(m.group("qty")),
+                rate=clean_number(m.group("rate")),
+                amount=clean_number(m.group("amount")),
+                extra=extra,
+            )
+        )
+    return items
+
+
 # --- Cognizant "Name Location TimeType Efforts UOM Rate NetBilling" text rows ---------------
 # Cognizant invoices aren't ruled tables — each contractor is a single text line:
 #   "Pérez de la Cruz,Gerardo Onsite RTIME 144.00 MHR 70.00 10,080.00"
@@ -1035,6 +1102,11 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
     # Odyssey "Qty Item Rate Amount" invoices where the data row is plain text under the header.
     if not items:
         items = parse_qty_item_lines(text)
+    # NextStep Recruiting & same-shape "DESCRIPTION QTY RATE AMOUNT" invoices: the contractor name
+    # (+ worked period in parens) sits under DESCRIPTION and the hours under QTY; rows are text, not a
+    # ruled table, so the table extractor reads only the header.
+    if not items:
+        items = parse_desc_qty_rate_amount(text)
     # Cognizant text-row line items ("<Name> Onsite RTIME <hours> MHR <rate> <amount>"). Gated on the
     # vendor so the loose row pattern can't misfire on other invoices.
     if not items and re.search(r"cognizant", text, re.IGNORECASE):

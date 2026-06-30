@@ -13,8 +13,8 @@ const VARIANTS: Record<
   flagged: {
     label: "Flagged",
     icon: Flag,
-    text: "text-rose-600",
-    iconClass: "h-4 w-4 fill-rose-500 text-rose-600",
+    text: "text-amber-700",
+    iconClass: "h-4 w-4 fill-amber-500 text-amber-700",
   },
   matched: {
     label: "Matched",
@@ -121,7 +121,9 @@ export function Column({
 
   return (
     <div className="flex-1 min-w-[280px]">
-      <div className="mb-3 flex items-center gap-2">
+      {/* Fixed height (matches the SlideToExport bar) so all columns' card lists start level,
+          whether or not a column has a headerExtra control. */}
+      <div className="mb-3 flex h-10 items-center gap-2">
         <Icon className={cfg.iconClass} />
         <h2 className={`text-sm font-bold uppercase tracking-wide ${cfg.text}`}>{cfg.label}</h2>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">

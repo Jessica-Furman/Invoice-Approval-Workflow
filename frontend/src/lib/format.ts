@@ -21,7 +21,7 @@ export const statusLabel: Record<Status, string> = {
 
 export const statusChip: Record<Status, string> = {
   matched: "bg-emerald-100 text-emerald-700",
-  flagged: "bg-rose-100 text-rose-700",
+  flagged: "bg-amber-100 text-amber-800",
   needs_manual_review: "bg-amber-100 text-amber-700",
   processing_failed: "bg-slate-200 text-slate-700",
 };

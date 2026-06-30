@@ -6,10 +6,21 @@ import {
   CheckCircle2,
   History as HistoryIcon,
   Settings,
+  LogOut,
 } from "lucide-react";
 import { Dashboard, type View } from "./pages/Dashboard";
 import { History } from "./pages/History";
 import { SearchBar } from "./components/SearchBar";
+import { AuthScreen } from "./pages/AuthScreen";
+import { useAuth } from "./auth/AuthContext";
+
+/** Two-character avatar initials from a display name ("Jane Doe" -> "JD"). */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
   { label: "Dashboard", icon: LayoutGrid, view: "dashboard" },
@@ -20,17 +31,19 @@ const navItems: { label: string; icon: typeof LayoutGrid; view: View }[] = [
 ];
 
 export default function App() {
+  const { user, signOut } = useAuth();
   const [view, setView] = useState<View>("dashboard");
   const [search, setSearch] = useState("");
+
+  // Unauthenticated -> show the login/signup screen instead of the app.
+  if (!user) return <AuthScreen />;
+
   return (
     <div className="flex min-h-screen">
       {/* Sidebar — Upbound near-black with lime accents */}
       <aside className="flex w-60 flex-col bg-brand-inkdark">
-        <div className="flex items-center gap-2 px-6 py-6">
-          <span className="text-2xl font-extrabold tracking-tight text-white">
-            InVoic<span className="text-brand-lime">ee</span>
-          </span>
-          <span className="h-2 w-2 rounded-full bg-brand-lime shadow-[0_0_12px_3px_rgba(164,214,30,0.8)]" />
+        <div className="px-6 py-6">
+          <img src="/logo.png" alt="inVoicee" className="h-10 w-auto" />
         </div>
         <nav className="flex-1 space-y-1.5 px-3">
           {navItems.map((item) => {
@@ -58,12 +71,20 @@ export default function App() {
           </a>
           <div className="mt-2 flex items-center gap-3 px-3 py-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-lime text-sm font-bold text-brand-inkdark">
-              IP
+              {initials(user.name)}
             </div>
-            <div className="text-xs">
-              <div className="font-medium text-white">Invoice Processor</div>
-              <div className="text-slate-400">Accounts Payable</div>
+            <div className="min-w-0 flex-1 text-xs">
+              <div className="truncate font-medium text-white">{user.name}</div>
+              <div className="truncate text-slate-400">{user.email}</div>
             </div>
+            <button
+              onClick={signOut}
+              title="Sign out"
+              aria-label="Sign out"
+              className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-brand-lime"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>

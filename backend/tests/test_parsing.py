@@ -17,6 +17,7 @@ from app.services.parsing.rules import (
     extract_person_name,
     parse_billable_lines,
     parse_cognizant_lines,
+    parse_desc_qty_rate_amount,
     parse_global_compass,
     parse_qty_item_lines,
     parse_services_rendered,
@@ -46,6 +47,36 @@ def test_parse_qty_item_lines_odyssey():
     assert items[0].hours == 176.0
     assert items[0].rate == 93.0
     assert items[0].amount == 16368.0
+
+
+def test_parse_desc_qty_rate_amount_nextstep():
+    # NextStep Recruiting: "DESCRIPTION QTY RATE AMOUNT" text rows. DESCRIPTION = name-role-type (period);
+    # QTY = hours, RATE = rate, AMOUNT = line total. Footer/bank-detail lines must NOT become line items.
+    text = (
+        "NextStep Recruiting LLC\n"
+        "BILL TO INVOICE 260617056\n"
+        "DESCRIPTION QTY RATE AMOUNT\n"
+        "Stephen Dickison-Scrum Master-Reg Hours (5/31/26-6/6/26) 34 95.00 3,230.00\n"
+        "Stephen Dickison-Scrum Master-Reg Hours (6/7/26-6/13/26) 40 95.00 3,800.00\n"
+        "ACH Payment Information BALANCE DUE $7,030.00\n"
+        "Routing Number: 111000753\n"
+        "Account Number: 1881843815\n"
+    )
+    items = parse_desc_qty_rate_amount(text)
+    assert len(items) == 2  # only the two contractor rows; BALANCE DUE / bank lines excluded
+    assert [li.contractor_name for li in items] == ["Stephen Dickison", "Stephen Dickison"]
+    assert [li.hours for li in items] == [34.0, 40.0]
+    assert [li.rate for li in items] == [95.0, 95.0]
+    assert [li.amount for li in items] == [3230.0, 3800.0]
+    # Each line carries its own worked period (so the invoice's full span is recoverable).
+    assert items[0].extra == {"period_start": "2026-05-31", "period_end": "2026-06-06"}
+    assert items[1].extra == {"period_start": "2026-06-07", "period_end": "2026-06-13"}
+
+
+def test_desc_qty_parser_requires_header():
+    # Without the DESCRIPTION/QTY/AMOUNT header the loose row pattern must not fire.
+    text = "Stephen Dickison-Scrum Master (5/31/26-6/6/26) 34 95.00 3,230.00\n"
+    assert parse_desc_qty_rate_amount(text) == []
 
 
 def test_parse_qty_item_lines_requires_header():

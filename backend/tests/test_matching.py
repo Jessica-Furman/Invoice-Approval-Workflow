@@ -96,22 +96,30 @@ def test_crossref_resolves_name_variant(db: Session):
     assert li.diff["match_method"] == "crossref"
 
 
-def test_submitted_hours_excluded_but_line_is_linked(db: Session):
-    # Posted-only: 40h "Submitted" do NOT count -> flagged. But the line must still LINK to the
-    # contractor (matched_clarity_id set) so the UI drill-down can show those submitted entries —
-    # this is the Stefan/Gravity case where the breakdown previously came back empty.
+def test_submitted_hours_now_count(db: Session):
+    # Rule update: hours count when status is Posted OR Submitted. 40h "Submitted" now counts and
+    # matches the 40h invoice -> matched.
     _ts(db, "Stefan Hofmeister", 40, worked=date(2026, 5, 4), status="Submitted")
     db.commit()
     inv = _invoice(db, [("Hofmeister Stefan", 40)])  # order-insensitive name resolution
     match_invoice(db, inv, ClarityIndex.build(db))
     db.commit()
     li = inv.line_items[0]
+    assert li.line_status == models.STATUS_MATCHED
+    assert li.diff["clarity_hours"] == 40.0
+    assert li.matched_clarity_id is not None
+
+
+def test_non_counting_status_excluded(db: Session):
+    # Everything other than Posted/Submitted is still excluded: 40h "Approved" do NOT count -> flagged.
+    _ts(db, "Jane Doe", 40, worked=date(2026, 5, 4), status="Approved")
+    db.commit()
+    inv = _invoice(db, [("Jane Doe", 40)])
+    match_invoice(db, inv, ClarityIndex.build(db))
+    db.commit()
+    li = inv.line_items[0]
     assert li.line_status == models.STATUS_FLAGGED
     assert li.diff["clarity_hours"] == 0.0
-    assert li.diff["clarity_pending_hours"] == 40.0
-    assert li.diff["pending_posting"] is True
-    assert li.matched_clarity_id is not None       # linked despite 0 posted -> drill-down works
-    assert "submitted/awaiting posting" in inv.mismatch_reasons[0]["reason"]
 
 
 def test_real_discrepancy_not_flagged_as_pending(db: Session):
@@ -126,12 +134,12 @@ def test_real_discrepancy_not_flagged_as_pending(db: Session):
     assert "awaiting posting" not in inv.mismatch_reasons[0]["reason"]
 
 
-def test_time_off_posted_and_date_filters(db: Session):
-    # Counted in-period: 60 + 20 = 80. Excluded: time-off (8), non-posted (10), out-of-period (40).
+def test_time_off_status_and_date_filters(db: Session):
+    # Counted in-period: 60 + 20 = 80. Excluded: time-off (8), non-counting status (10), out-of-period (40).
     _ts(db, "Jane Doe", 60, worked=date(2026, 5, 1))
     _ts(db, "Jane Doe", 20, worked=date(2026, 5, 10))
     _ts(db, "Jane Doe", 8, worked=date(2026, 5, 12), time_off=True)
-    _ts(db, "Jane Doe", 10, worked=date(2026, 5, 13), status="Submitted")  # not posted -> excluded
+    _ts(db, "Jane Doe", 10, worked=date(2026, 5, 13), status="Open")  # non-counting status -> excluded
     _ts(db, "Jane Doe", 40, worked=date(2026, 6, 15))  # outside invoice period
     db.commit()
     inv = _invoice(db, [("Jane Doe", 80)])

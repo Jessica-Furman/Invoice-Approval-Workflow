@@ -12,13 +12,16 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db.base import Base
+import app.services.coupa as coupa
 from app.services.coupa import (
     INVOICE_HEADER_COLUMNS,
     INVOICE_LINE_COLUMNS,
     build_header_row,
     coupa_csv_bytes,
     coupa_csv_filename,
+    supplier_number_for,
     _load_project_company_map,
+    _load_supplier_index,
 )
 from app.utils.names import normalize_name
 
@@ -287,7 +290,69 @@ def test_unknown_fields_are_placeholder_tokens(db: Session):
     inv = _matched_invoice(db)
     h = build_header_row(inv)
     assert h["Requester Email"] == "<<APPROVER_EMAIL>>"
-    assert h["Supplier Number"] == "<<SUPPLIER_NUMBER>>"
+    assert h["Requester Name"] == "<<APPROVER_NAME>>"
+    assert h["Chart of Accounts"]  # resolved or placeholder, but present
+
+
+def test_load_supplier_index_normalizes_names(tmp_path):
+    p = tmp_path / "suppliers.csv"
+    p.write_text(
+        "Name,Supplier Number\n"
+        "AVASOFT INC-317598 (08820),RAC-317598\n"            # strip "-317598" and "(08820)"
+        "GLOBAL COMPASS TECHNOLOGIES LLC (84043),RAC-363223\n"
+        "NO NUMBER VENDOR (12345),\n",                        # blank number -> skipped
+        encoding="utf-8",
+    )
+    exact, names, numbers, despaced = _load_supplier_index(p)
+    assert exact["avasoft inc"] == "RAC-317598"
+    assert exact["global compass technologies llc"] == "RAC-363223"
+    assert "no number vendor" not in exact
+    assert despaced["avasoft"] == {"RAC-317598"}  # core-name key
+
+
+def test_supplier_number_lookup_exact_and_unknown(monkeypatch):
+    supplier_number_for.cache_clear()
+    monkeypatch.setattr(
+        coupa, "_supplier_index",
+        lambda: ({"acme inc": "RAC-9"}, ["acme inc"], ["RAC-9"], {"acme": {"RAC-9"}}),
+    )
+    assert supplier_number_for("ACME Inc.") == "RAC-9"          # punctuation-insensitive exact match
+    assert supplier_number_for("Totally Different Co") is None  # no confident match -> None (placeholder)
+    supplier_number_for.cache_clear()
+
+
+def test_supplier_number_matches_despite_suffix_and_spacing(monkeypatch):
+    # The CIGNITI case: invoice vendor parsed spaceless as "CIGNITITECHNOLOGIESLIMITED" must still match
+    # the list's "Cigniti Technologies Inc" by unambiguous core name (suffix Limited vs Inc ignored).
+    supplier_number_for.cache_clear()
+    idx = ({"cigniti technologies inc": "RAC-281553"}, ["cigniti technologies inc"],
+           ["RAC-281553"], {"cignititechnologies": {"RAC-281553"}})
+    monkeypatch.setattr(coupa, "_supplier_index", lambda: idx)
+    assert supplier_number_for("CIGNITITECHNOLOGIESLIMITED") == "RAC-281553"
+    supplier_number_for.cache_clear()
+
+
+def test_supplier_number_ambiguous_core_name_not_guessed(monkeypatch):
+    # Two suppliers share a core name -> don't guess (return None / placeholder) unless one is exact.
+    supplier_number_for.cache_clear()
+    idx = ({"avasoft": "RAC-298764", "avasoft inc": "RAC-317598"},
+           ["avasoft", "avasoft inc"], ["RAC-298764", "RAC-317598"],
+           {"avasoft": {"RAC-298764", "RAC-317598"}})
+    monkeypatch.setattr(coupa, "_supplier_index", lambda: idx)
+    assert supplier_number_for("AVASOFT Inc.") == "RAC-317598"   # exact still resolves
+    assert supplier_number_for("Avasoft Holdings") is None       # ambiguous core -> not guessed
+    supplier_number_for.cache_clear()
+
+
+def test_header_supplier_number_filled_from_list(db: Session, monkeypatch):
+    supplier_number_for.cache_clear()
+    monkeypatch.setattr(
+        coupa, "_supplier_index",
+        lambda: ({"avasoft": "RAC-555"}, ["avasoft"], ["RAC-555"], {"avasoft": {"RAC-555"}}),
+    )
+    inv = _matched_invoice(db)  # vendor "AVASOFT"
+    assert build_header_row(inv)["Supplier Number"] == "RAC-555"
+    supplier_number_for.cache_clear()
 
 
 def test_multi_line_invoice_emits_a_row_per_contractor(db: Session):

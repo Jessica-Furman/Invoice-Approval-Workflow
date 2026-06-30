@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+from collections import defaultdict
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -31,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.config import REPO_ROOT
-from app.services.matching import _line_period
+from app.services.matching import _line_period, countable_status_filter
 
 # --- Column schemas (per documentation/CSV creation blueprint.csv) -------------------------------
 
@@ -127,9 +128,101 @@ def project_accounting(project_id: str | None, investment_name: str | None = Non
     company = _company_for_project(project_id, investment_name)
     return {
         "company": company,
+        "cost_code": COMPANY_CODE.get(company),   # company code: RAC -> 5, ACIMA -> 67
         "cost_center": COST_CENTER.get(company),
         "lob": _project_lob_map().get(project_id) if project_id else None,
     }
+
+
+# --- Supplier Number lookup (documentation/Active supplier list.csv) -----------------------------
+# The vendor->supplier-number mapping. Supplier "Name" is messy: a trailing "(zip)" and sometimes a
+# "-<digits>" suffix (the supplier number), e.g. "AVASOFT INC-317598 (08820)" -> RAC-317598. We strip
+# those, normalize, and match the invoice vendor exact-first, then fuzzy.
+ACTIVE_SUPPLIER_CSV = REPO_ROOT / "documentation" / "Active supplier list.csv"
+_SUPPLIER_FUZZY_CUTOFF = 88  # token_sort_ratio; high so we don't grab a similarly-named different vendor
+
+
+# Legal-entity suffixes stripped (as a trailing run, with spaces removed) to compare a vendor to a
+# supplier by core name — handles "… Limited" vs "… Inc" and spaceless parses ("CIGNITITECHNOLOGIESLIMITED").
+_DESPACE_SUFFIX_RE = re.compile(r"(incorporated|corporation|limited|company|llc|ltd|inc|corp|llp|plc|pvt|gmbh)+$")
+
+
+def _normalize_supplier_name(name: str | None) -> str:
+    """Canonical key for matching a vendor to a supplier 'Name': drop trailing '(...)' and '-<digits>'
+    suffixes, lowercase, and reduce punctuation to single spaces."""
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", name or "")  # trailing "(zip/code)"
+    s = re.sub(r"-\d+\s*$", "", s)                    # trailing "-<supplier digits>"
+    s = re.sub(r"[^a-z0-9]+", " ", s.lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _despace_key(norm: str) -> str:
+    """A loose key for unambiguous core-name matching: remove spaces and a trailing legal suffix, so
+    'cigniti technologies inc' and a spaceless 'cignititechnologieslimited' both reduce to the same key."""
+    return _DESPACE_SUFFIX_RE.sub("", norm.replace(" ", ""))
+
+
+def _load_supplier_index(path: Path) -> tuple[dict[str, str], list[str], list[str], dict[str, set[str]]]:
+    """Read the supplier list into: exact {norm name -> number}, parallel norm-name + number lists, and
+    {despaced core key -> set of numbers} (used only when a key maps to exactly one supplier)."""
+    exact: dict[str, str] = {}
+    names: list[str] = []
+    numbers: list[str] = []
+    despaced: dict[str, set[str]] = defaultdict(set)
+    if not path.exists():
+        return exact, names, numbers, {}
+    with open(path, encoding="utf-8-sig", errors="ignore", newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return exact, names, numbers, {}
+        try:
+            ni, si = header.index("Name"), header.index("Supplier Number")
+        except ValueError:
+            return exact, names, numbers, {}
+        for row in reader:
+            if len(row) <= max(ni, si):
+                continue
+            number = row[si].strip()
+            norm = _normalize_supplier_name(row[ni])
+            if not number or not norm:
+                continue
+            exact.setdefault(norm, number)  # first occurrence wins
+            names.append(norm)
+            numbers.append(number)
+            key = _despace_key(norm)
+            if key:
+                despaced[key].add(number)
+    return exact, names, numbers, dict(despaced)
+
+
+@lru_cache(maxsize=1)
+def _supplier_index() -> tuple[dict[str, str], list[str], list[str], dict[str, set[str]]]:
+    return _load_supplier_index(ACTIVE_SUPPLIER_CSV)
+
+
+@lru_cache(maxsize=512)
+def supplier_number_for(vendor_name: str | None) -> str | None:
+    """The Coupa Supplier Number for an invoice vendor, or None if not confidently found.
+
+    1) exact normalized match; 2) unambiguous core-name match (spaceless, legal suffix dropped — handles
+    "Limited" vs "Inc" and spaceless parses); 3) high-confidence fuzzy (token_sort_ratio)."""
+    if not vendor_name:
+        return None
+    exact, names, numbers, despaced = _supplier_index()
+    norm = _normalize_supplier_name(vendor_name)
+    if not norm:
+        return None
+    if norm in exact:
+        return exact[norm]
+    key = _despace_key(norm)
+    cands = despaced.get(key) if key else None
+    if cands and len(cands) == 1:  # exactly one supplier shares this core name
+        return next(iter(cands))
+    from rapidfuzz import fuzz, process
+
+    hit = process.extractOne(norm, names, scorer=fuzz.token_sort_ratio, score_cutoff=_SUPPLIER_FUZZY_CUTOFF)
+    return numbers[hit[2]] if hit else None
 
 # --- Placeholder tokens for data we can't source yet --------------------------------------------
 # Swap each of these out for a real lookup (config/mapping table) once that data is available.
@@ -246,9 +339,9 @@ def _clarity_company_breakdown(
 ) -> dict[tuple[str | None, str | None], float] | None:
     """Sum a matched contractor's in-period Clarity hours grouped by (company, CapEx/OpEx).
 
-    Uses the same filter as matching — posted, not time-off, Date Worked within the line's period —
-    so the buckets sum to the matched hours. Returns None when it can't be computed (no db / no
-    matched Clarity row), so the caller falls back to a single invoice-hours line.
+    Uses the same filter as matching — counted (Posted or Submitted), not time-off, Date Worked within
+    the line's period — so the buckets sum to the matched hours. Returns None when it can't be computed
+    (no db / no matched Clarity row), so the caller falls back to a single invoice-hours line.
     """
     ts = li.matched_clarity
     if db is None or ts is None or not ts.contractor_name_normalized:
@@ -256,7 +349,7 @@ def _clarity_company_breakdown(
     start, end = _line_period(li, inv)
     q = select(models.ClarityTimesheet).where(
         models.ClarityTimesheet.contractor_name_normalized == ts.contractor_name_normalized,
-        models.ClarityTimesheet.is_posted.is_(True),
+        countable_status_filter(),  # Posted OR Submitted
         models.ClarityTimesheet.is_time_off.is_(False),
     )
     if start and end:
@@ -306,7 +399,7 @@ def build_header_row(inv: models.Invoice, *, matched_only: bool = False) -> dict
     return {
         "Invoice": "Invoice",
         "Invoice Number": inv.invoice_number or "",
-        "Supplier Number": _PLACEHOLDER["supplier_number"],
+        "Supplier Number": supplier_number_for(inv.vendor_name) or _PLACEHOLDER["supplier_number"],
         "Supplier Name": inv.vendor_name or "",
         "Status": STATUS_DEFAULT,
         "Invoice Date": _fmt_date(inv.date_received),
@@ -333,7 +426,7 @@ def _line_row(
     return {
         "Invoice Line": "Invoice Line",
         "Invoice Number": inv.invoice_number or "",
-        "Supplier Number": _PLACEHOLDER["supplier_number"],
+        "Supplier Number": supplier_number_for(inv.vendor_name) or _PLACEHOLDER["supplier_number"],
         "Supplier Name": inv.vendor_name or "",
         "Line Number": str(line_no),
         "Description": description,
