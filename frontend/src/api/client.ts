@@ -223,3 +223,65 @@ export async function importClarity(file: File): Promise<ClarityImportResult> {
   });
   return data;
 }
+
+// ---- "Other Invoice Types" (hardware / software / subscription) ----
+export type OtherStatus = "all_data_found" | "missing_data";
+
+export interface OtherInvoiceSummary {
+  id: number;
+  vendor_name: string | null;
+  invoice_number: string | null;
+  date_received: string | null;
+  total_invoice_cost: number | null;
+  status: OtherStatus;
+  supplier_number: string | null;
+  archived_at: string | null;
+  line_item_count: number;
+  missing_count: number;
+}
+
+export interface OtherLineItem {
+  id: number;
+  description: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  amount: number | null;
+}
+
+export interface OtherInvoiceDetail extends OtherInvoiceSummary {
+  pdf_storage_key: string | null;
+  parse_confidence: number | null;
+  missing_fields: string[];
+  line_items: OtherLineItem[];
+}
+
+export interface OtherDashboardResponse {
+  missing: OtherInvoiceSummary[];
+  found: OtherInvoiceSummary[];
+  all: OtherInvoiceSummary[];
+}
+
+export async function fetchOtherDashboard(): Promise<OtherDashboardResponse> {
+  const { data } = await api.get<OtherDashboardResponse>("/api/other/dashboard");
+  return data;
+}
+
+export async function fetchOtherInvoice(id: number): Promise<OtherInvoiceDetail> {
+  const { data } = await api.get<OtherInvoiceDetail>(`/api/other/invoices/${id}`);
+  return data;
+}
+
+export async function fetchOtherHistory(): Promise<OtherInvoiceSummary[]> {
+  const { data } = await api.get<OtherInvoiceSummary[]>("/api/other/history");
+  return data;
+}
+
+/** Upload hardware/software/subscription PDFs — runs the OTHER parser only (never contractor rules). */
+export async function uploadOtherInvoices(files: File[]): Promise<UploadResult> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const { data } = await api.post<UploadResult>("/api/other/invoices/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}

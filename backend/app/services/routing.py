@@ -68,7 +68,11 @@ def remove_from_inboxes(invoice: models.Invoice) -> list[str]:
 
 def route_all(db: Session) -> dict:
     counts = {ROUTE_MATCHED: 0, ROUTE_FLAGGED: 0}
-    for inv in db.scalars(select(models.Invoice)).all():
+    # Contractor invoices only; "other" invoices are routed by their own pipeline (not to matched/flagged).
+    invoices = db.scalars(
+        select(models.Invoice).where(models.Invoice.invoice_type == models.INVOICE_TYPE_CONTRACTOR)
+    ).all()
+    for inv in invoices:
         counts[route_invoice(db, inv)] += 1
     db.commit()
     return counts

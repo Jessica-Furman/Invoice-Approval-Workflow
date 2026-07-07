@@ -50,7 +50,12 @@ def _ensure_columns() -> None:
         return
     existing = {c["name"] for c in insp.get_columns("invoices")}
     coltype = "TIMESTAMP" if engine.dialect.name == "postgresql" else "DATETIME"
-    for name, ddl in {"archived_at": f"ADD COLUMN archived_at {coltype}"}.items():
+    migrations = {
+        "archived_at": f"ADD COLUMN archived_at {coltype}",
+        # Backfill existing rows to the contractor pipeline; "other" is set only by ingest_other_pdf.
+        "invoice_type": "ADD COLUMN invoice_type VARCHAR(32) DEFAULT 'contractor'",
+    }
+    for name, ddl in migrations.items():
         if name not in existing:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE invoices {ddl}"))

@@ -13,9 +13,11 @@ import { fetchDashboard } from "../api/client";
 export function SearchBar({
   value,
   onChange,
+  dark = false,
 }: {
   value: string;
   onChange: (v: string) => void;
+  dark?: boolean;
 }) {
   const { data } = useQuery({ queryKey: ["dashboard"], queryFn: fetchDashboard });
   const [open, setOpen] = useState(false);
@@ -30,7 +32,8 @@ export function SearchBar({
   );
 
   // Inline prediction: first known vendor that starts with what's typed (case-insensitive).
-  const ghostVendor = q ? vendors.find((v) => v.toLowerCase().startsWith(q)) : undefined;
+  // Suggestions come from the CONTRACTOR board, so they're suppressed on the dark ("other") board.
+  const ghostVendor = q && !dark ? vendors.find((v) => v.toLowerCase().startsWith(q)) : undefined;
   const ghost = ghostVendor && ghostVendor.length > value.length ? ghostVendor.slice(value.length) : "";
 
   const vendorMatches = q ? vendors.filter((v) => v.toLowerCase().includes(q)).slice(0, 6) : [];
@@ -42,7 +45,7 @@ export function SearchBar({
         )
         .slice(0, 6)
     : [];
-  const showDropdown = open && q.length > 0 && (vendorMatches.length > 0 || idMatches.length > 0);
+  const showDropdown = !dark && open && q.length > 0 && (vendorMatches.length > 0 || idMatches.length > 0);
 
   function acceptGhost() {
     if (ghostVendor) {
@@ -86,7 +89,11 @@ export function SearchBar({
           }
         }}
         placeholder="Search vendors or invoice IDs…"
-        className="relative w-full rounded-lg border border-slate-200 bg-transparent pl-10 pr-9 py-2 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none"
+        className={`relative w-full rounded-lg border bg-transparent pl-10 pr-9 py-2 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none ${
+          dark
+            ? "border-slate-700 text-slate-100 placeholder:text-slate-500"
+            : "border-slate-200"
+        }`}
       />
 
       {value && (

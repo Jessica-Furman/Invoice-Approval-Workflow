@@ -33,6 +33,27 @@ class ParsedInvoice(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# "Other Invoice Types" contract (hardware / software / subscription). No Clarity
+# matching — we simply extract the vendor's service lines. "description" is the
+# SERVICE billed (not a person). Quantity/unit price are optional.
+# ---------------------------------------------------------------------------
+class ParsedOtherLineItem(BaseModel):
+    description: str | None = None
+    quantity: float | None = None
+    unit_price: float | None = None
+    amount: float | None = None
+
+
+class ParsedOtherInvoice(BaseModel):
+    schema_version: int = 1
+    vendor_name: str | None = None
+    invoice_number: str | None = None
+    date_received: date | None = None
+    total_invoice_cost: float | None = None
+    line_items: list[ParsedOtherLineItem] = []
+
+
+# ---------------------------------------------------------------------------
 # API response DTOs
 # ---------------------------------------------------------------------------
 class MismatchReason(BaseModel):
@@ -154,3 +175,48 @@ class UploadResult(BaseModel):
     uploaded: int = 0
     failed: int = 0
     results: list[UploadResultItem] = []
+
+
+# ---------------------------------------------------------------------------
+# "Other Invoice Types" API DTOs (hardware / software / subscription board)
+# ---------------------------------------------------------------------------
+class OtherLineItemOut(BaseModel):
+    """One parsed service line: description (service billed) + optional qty/unit price + amount."""
+
+    id: int
+    description: str | None = None
+    quantity: float | None = None
+    unit_price: float | None = None
+    amount: float | None = None
+
+
+class OtherInvoiceSummary(BaseModel):
+    """Card view on the Other-invoices board."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vendor_name: str | None = None
+    invoice_number: str | None = None
+    date_received: date | None = None
+    total_invoice_cost: float | None = None
+    status: str  # all_data_found | missing_data
+    supplier_number: str | None = None
+    archived_at: datetime | None = None
+    line_item_count: int = 0
+    missing_count: int = 0
+
+
+class OtherInvoiceDetail(OtherInvoiceSummary):
+    """Detail-drawer payload: all parsed fields + the service line-item table + missing-field list."""
+
+    pdf_storage_key: str | None = None
+    parse_confidence: float | None = None
+    missing_fields: list[str] = []
+    line_items: list[OtherLineItemOut] = []
+
+
+class OtherDashboardResponse(BaseModel):
+    missing: list[OtherInvoiceSummary] = []
+    found: list[OtherInvoiceSummary] = []
+    all: list[OtherInvoiceSummary] = []

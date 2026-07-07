@@ -28,6 +28,16 @@ STATUS_FLAGGED = "flagged"
 STATUS_NEEDS_REVIEW = "needs_manual_review"
 STATUS_FAILED = "processing_failed"
 
+# Invoice type discriminator: the original contractor pipeline vs. the "Other Invoice Types"
+# pipeline (hardware/software/subscription). Existing rows default to "contractor".
+INVOICE_TYPE_CONTRACTOR = "contractor"
+INVOICE_TYPE_OTHER = "other"
+
+# Status values for "other" invoices — these are NOT matched against Clarity; they land in one of two
+# columns depending on whether every required field was parsed.
+STATUS_ALL_DATA_FOUND = "all_data_found"
+STATUS_MISSING_DATA = "missing_data"
+
 
 class Invoice(Base):
     __tablename__ = "invoices"
@@ -41,6 +51,11 @@ class Invoice(Base):
     total_invoice_cost: Mapped[float | None] = mapped_column(Float)
 
     status: Mapped[str] = mapped_column(String(32), default=STATUS_NEEDS_REVIEW, index=True)
+    # Which pipeline produced this invoice: "contractor" (default) or "other" (hardware/software/
+    # subscription). Keeps the two boards fully separate without touching contractor logic.
+    invoice_type: Mapped[str] = mapped_column(
+        String(32), default=INVOICE_TYPE_CONTRACTOR, index=True
+    )
     # List of {field, reason, invoice_value, clarity_value} dicts (User Stories 16, 26).
     mismatch_reasons: Mapped[list | None] = mapped_column(JSON, default=list)
 
@@ -192,4 +207,8 @@ __all__ = [
     "STATUS_FLAGGED",
     "STATUS_NEEDS_REVIEW",
     "STATUS_FAILED",
+    "STATUS_ALL_DATA_FOUND",
+    "STATUS_MISSING_DATA",
+    "INVOICE_TYPE_CONTRACTOR",
+    "INVOICE_TYPE_OTHER",
 ]

@@ -144,3 +144,83 @@ def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) 
     ))
     db.commit()
     return inv
+
+
+def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) -> models.Invoice:
+    """Ingest a hardware/software/subscription ("other") invoice. Parallel to `ingest_pdf` but uses the
+    dedicated `parse_other_invoice` rules, resolves the supplier number, and routes to
+    `all_data_found` vs `missing_data` — NO Clarity matching. Contractor logic is untouched.
+
+    Line items reuse the shared columns as storage: `contractor_name`=service description,
+    `hours`=quantity, `rate`=unit price, `amount`=amount.
+    """
+    from app.services.coupa import supplier_number_for
+    from app.services.parsing.other_rules import parse_other_invoice, required_missing_fields
+
+    storage = storage or LocalStorage(settings.STORAGE_DIR)
+    result = parse_other_invoice(pdf_path)
+    p = result.parsed
+
+    storage_key = storage.put_file(pdf_path)
+    supplier_number = supplier_number_for(p.vendor_name)
+    missing = required_missing_fields(p, supplier_number)
+    status = models.STATUS_MISSING_DATA if missing else models.STATUS_ALL_DATA_FOUND
+
+    inv = None
+    if p.invoice_number:
+        inv = db.scalar(
+            select(models.Invoice).where(
+                models.Invoice.invoice_number == p.invoice_number,
+                models.Invoice.invoice_type == models.INVOICE_TYPE_OTHER,
+            )
+        )
+    if inv is None:
+        inv = db.scalar(select(models.Invoice).where(models.Invoice.pdf_storage_key == storage_key))
+    if inv is None:
+        inv = models.Invoice()
+        db.add(inv)
+
+    inv.invoice_type = models.INVOICE_TYPE_OTHER
+    inv.vendor_name = p.vendor_name
+    inv.invoice_number = p.invoice_number or _invoice_no_from_filename(Path(pdf_path).stem)
+    inv.archived_at = None
+    inv.date_received = p.date_received
+    inv.payment_period_start = inv.payment_period_end = None
+    inv.total_invoice_cost = p.total_invoice_cost
+    inv.status = status
+    inv.mismatch_reasons = [
+        {"field": f, "reason": "Required field could not be parsed.",
+         "invoice_value": None, "clarity_value": None}
+        for f in missing
+    ]
+    inv.pdf_storage_key = storage_key
+    inv.parse_confidence = None
+    inv.raw_extraction = {
+        "method": result.method,
+        "supplier_number": supplier_number,
+        "missing_fields": missing,
+        "parsed": p.model_dump(mode="json"),
+        "warnings": result.warnings,
+    }
+
+    inv.line_items.clear()
+    db.flush()
+    for li in p.line_items:
+        inv.line_items.append(
+            models.InvoiceLineItem(
+                contractor_name=li.description,   # reused column = service description
+                hours=li.quantity,                # reused column = quantity
+                rate=li.unit_price,               # reused column = unit price
+                amount=li.amount,
+                line_status=None,
+            )
+        )
+
+    db.add(models.AuditLog(
+        invoice_id=inv.id,
+        event="parsed_other",
+        detail={"method": result.method, "supplier_number": supplier_number,
+                "line_items": len(p.line_items), "status": status, "missing": missing},
+    ))
+    db.commit()
+    return inv

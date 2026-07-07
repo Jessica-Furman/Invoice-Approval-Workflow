@@ -1,21 +1,25 @@
 """Coupa import-CSV generation for matched contractor invoices.
 
-Turns a matched `Invoice` (+ its line items + linked Clarity data) into a Coupa-ready import CSV.
-The CSV uses the **simplified MVP column subset** from `documentation/csv_rules` (not the full
-~180-column Coupa template). Fields we can't source yet — accounting codes and the approval-chain
-requester — are emitted as obvious **placeholder tokens** (e.g. ``<<CHART_OF_ACCOUNTS>>``) so a human
-can spot and fill them in the downloaded file. As real mappings arrive (project export,
-vendor->supplier-number, project->manager), replace the placeholder lookups in `_PLACEHOLDER` /
-the `*_for` helpers with the actual source.
+Turns a matched `Invoice` (+ its line items + linked Clarity data) into a Coupa-ready import CSV that
+matches **`documentation/Coupa sample invoice.xlsx`** exactly — the same column set, header names and
+row layout Coupa ingests. Any column we can't source from the invoice/Clarity is left **blank** (no
+placeholder tokens): a human fills those in the downloaded file if needed.
 
-Structure of the emitted file (mirrors `documentation/Final CSV.txt`):
-    row 1  -> Invoice header column schema
-    row 2  -> Invoice Line column schema
-    row 3  -> the invoice's header data row
-    row 4+ -> one Invoice Line data row per contractor line item
+Structure of the emitted file (exactly mirrors the sample workbook):
+    row 1  -> the `Invoice` record-type column schema     (177 columns)
+    row 2  -> the `Invoice Line` record-type column schema (73 columns)
+    row 3  -> the invoice's `Invoice` header data row
+    row 4+ -> one `Invoice Line` data row per contractor line item
 
-`Account Allocation` rows are intentionally not emitted — they're only needed to split one line
-across multiple accounts, which the MVP doesn't do.
+Each data row is tagged in its first cell by record type ("Invoice" / "Invoice Line"), positionally
+aligned to that type's schema row. Only the fields we have are populated:
+
+    Header : Invoice Number*, Supplier Name/Number, Invoice Date*, Submit For Approval?,
+             Line Level Taxation*, Chart of Accounts* (matched only), Currency.
+             Status is intentionally BLANK.
+    Line   : Line Number, Description*, Price* (rate), Quantity (hours), Unit of Measure* (HOUR),
+             Account Segment 1 (company code), 2 (cost center), 3 (CapEx/OpEx GL code).
+             PO / Requester / CapEx-OpEx-label columns exist in the schema but are left blank.
 """
 from __future__ import annotations
 
@@ -34,31 +38,103 @@ from app import models
 from app.config import REPO_ROOT
 from app.services.matching import _line_period, countable_status_filter
 
-# --- Column schemas (per documentation/CSV creation blueprint.csv) -------------------------------
+# --- Column schemas — the EXACT Coupa template (documentation/Coupa sample invoice.xlsx) ----------
+# Two record types share the file, distinguished by the first cell. These lists are the sample
+# workbook's row 1 ("Invoice") and row 2 ("Invoice Line") headers, verbatim (asterisks and all).
 
 INVOICE_HEADER_COLUMNS = [
-    "Invoice", "Invoice Number", "Supplier Number", "Supplier Name", "Status", "Invoice Date",
-    "Submit For Approval?", "Line Level Taxation", "Chart of Accounts", "Currency",
-    "Requester Email", "Requester Name", "Payment Terms", "Supplier Note", "Image Scan Url",
-    "Local Currency Net", "Taxes In Origin Country Currency",
+    'Invoice', 'Invoice Number*', 'Supplier Name',
+    'Supplier Number', 'Status', 'Invoice Date*',
+    'Submit For Approval?', 'Handling Amount', 'Misc Amount',
+    'Shipping Amount', 'Line Level Taxation*', 'Tax Amount',
+    'Tax Rate', 'Tax Code', 'Tax Rate Type',
+    'Supplier Note', 'Payment Terms', 'Shipping Terms',
+    'Requester Email', 'Requester Name', 'Requester Lookup Name',
+    'Chart of Accounts*', 'Currency', 'Contract Number',
+    'Image Scan Filename', 'Image Scan URL', 'Local Currency Net',
+    'Taxes In Origin Country Currency', 'Local Currency Gross', 'Delivery Number',
+    'Delivery Date', 'Margin Scheme', 'Invoice Issuance Time',
+    'Cash Register Operator', 'Means Of Payment', 'Unique Identification Code Of Cash Receipt',
+    'Security Code Of Issuer', 'Cash Accounting Scheme Reference', 'Exchange Rate',
+    'Gross Total', 'Invoice Control Total', 'Late Payment Penalties',
+    'Credit Reason', 'Early Payment Provisions', 'Pre-Payment Date',
+    'Self Billing Reference', 'Discount Amount', 'Reverse Charge Reference',
+    'Discount %', 'Credit Note differences with Original Invoice', 'Original Value of Supply',
+    'Correct Value of Supply', 'Customs Declaration Number', 'Customs Office',
+    'Customs Declaration Date', 'Payment Order Reference', 'Payment Order Number',
+    'Resolution Number', 'Amount of advance payment received', 'Type of Relationship',
+    'Invoice Reference Number (IRN)', 'Series', 'Folio Number',
+    'Buyer Representative Name', 'Supplier Representative Name', 'Payment Schedule Terms',
+    'Transaction UUID', 'Transaction Notification Date', 'VAT Chargeability System',
+    'Ship To Name', 'Ship To Id', 'Ship To Attention',
+    'Ship To Street1', 'Ship To Street2', 'Ship To City',
+    'Ship To State', 'Ship To Postal Code', 'Ship to Country Code',
+    'Ship to Country Name', 'Ship to Location Code', 'Ship to VAT ID',
+    'Ship to Local Tax Number', 'Bill To Address Id', 'Bill To Address Legal Entity Name',
+    'Bill To Address Street', 'Bill To Address City', 'Bill To Address Postal Code',
+    'Bill To Address Country Code', 'Bill To Address Location Code', 'Bill To Address VAT ID',
+    'Bill To Address Local Tax Number', 'Override Tax Country Code', 'Remit To Address Street1',
+    'Remit To Address Street2', 'Remit To Address City', 'Remit To Address State',
+    'Remit To Address Postal Code', 'Remit To Address Country Code', 'Remit To Code',
+    'Remit To Tax Prefix', 'Remit To Tax Number', 'Remit To Tax Country Code',
+    'Remit To VAT ID', 'Remit To Local Tax Number', 'Invoice From Address Street1',
+    'Invoice From Address Street2', 'Invoice From Address City', 'Invoice From Address State',
+    'Invoice From Address Postal Code', 'Invoice From Address Country Code', 'Invoice From Code',
+    'Ship From Address Street1', 'Ship From Address Street2', 'Ship From Address City',
+    'Ship From Address State', 'Ship From Address Postal Code', 'Ship From Address Country Code',
+    'Ship From Code', 'Original invoice number', 'Original invoice date',
+    'Is Credit Note', 'Disputed Invoice Number', 'Dispute Resolution Credit Note Number',
+    'Supplier Tax Number', 'Buyer Tax Number', 'Date of Discovery of Facts Decisive for Correction',
+    'Place Of Supply', 'Split Payment Mechanism', 'Endorsement On Invoices',
+    'New Means Of Transport', 'Place Of Issuance', 'Amount Of Advance Payment',
+    'Supplier Invoice Issuer Name', 'Supplier Invoice Reviewer Name', 'Supplier Payment Collector Name',
+    'Signed QR Code', 'State Tax ID Number', 'State Tax ID Number for Substitute Taxpayer',
+    'Municipality Tax ID Number', 'Serial Code of Fiscal Invoice', 'Verification Code',
+    'Type of Document', 'Protocol Number', 'Nature of Operation',
+    'Type of Operation', 'Freight Type', 'Vehicle License Plate',
+    'National Enrollment of Conveyor', 'Volume Amount', 'Volume Gross Weight',
+    'Volume Liquid Weight', 'Volume Brand', 'Volume Type',
+    'Volume Numbering', 'Payment Agreement Notes', 'Attachment 1',
+    'Attachment 2', 'Attachment 3', 'Attachment 4',
+    'Attachment 5', 'Attachment 6', 'Attachment 7',
+    'Attachment 8', 'Attachment 9', 'Attachment 10',
+    'Ship To Street3', 'Ship To Street4', 'Remit To Address Street3',
+    'Remit To Address Street4', 'Invoice From Address Street3', 'Invoice From Address Street4',
+    'Ship From Address Street3', 'Ship From Address Street4', 'Invoice Group',
+    'Batch ID', 'Posting Date', 'Comments to Supplier',
 ]
 
 INVOICE_LINE_COLUMNS = [
-    "Invoice Line", "Invoice Number", "Supplier Number", "Supplier Name", "Line Number",
-    "Description", "Price", "Quantity", "Unit of Measure", "Category", "PO Number",
-    "PO Line Number", "Account Code", "Account Segment 1", "Account Segment 2",
-    "Account Segment 3", "Account Segment 4", "Billing Notes",
-]
-
-ACCOUNT_ALLOCATION_COLUMNS = [
-    "Account Allocation", "Invoice Number", "Invoice Line Number", "Amount", "Percent",
-    "Account Code", "Account Segment 1", "Account Segment 2", "Account Segment 3",
-    "Account Segment 4", "Budget Period Name",
+    'Invoice Line', 'Invoice Number*', 'Supplier Name',
+    'Supplier Number', 'Line Number', 'Description*',
+    'Supplier Part Number', 'Auxiliary Part Number', 'Price*',
+    'Quantity', 'Bulk Price', 'Bulk Price Qty',
+    'Bulk Price UOM', 'Bulk Price Conversion Numerator', 'Bulk Price Conversion Denominator',
+    'Unit of Measure*', 'Category', 'Subcategory',
+    'Deductibility', 'PO Number', 'PO Line Number',
+    'Account Name', 'Account Code', 'Billing Notes',
+    'Account Segment 1', 'Account Segment 2', 'Account Segment 3',
+    'Account Segment 4', 'Account Segment 5', 'Account Segment 6',
+    'Account Segment 7', 'Account Segment 8', 'Account Segment 9',
+    'Account Segment 10', 'Account Segment 11', 'Account Segment 12',
+    'Account Segment 13', 'Account Segment 14', 'Account Segment 15',
+    'Account Segment 16', 'Account Segment 17', 'Account Segment 18',
+    'Account Segment 19', 'Account Segment 20', 'Budget Period Name',
+    'Net Weight', 'Weight UOM', 'Price per Weight',
+    'Match Reference', 'Delivery Note Number', 'Original Date Of Supply',
+    'Commodity Name', 'HSN/SAC', 'UNSPSC',
+    'Adjustment Type', 'Fiscal Code', 'Classification of Goods',
+    'Municipality Taxation Code', 'Item Barcode', 'Line Tax Amount',
+    'Line Tax Rate', 'Line Tax Code', 'Line Tax Rate Type',
+    'Exempt from Tax?', 'Reverse Charge?', 'Out of Scope?',
+    'Line Tax Location', 'Line Tax Description', 'Line Tax Supply Date',
+    'Line Nature of Tax', 'Line Product Tax Classification', 'Customer Accounting?',
+    'Exclude from tax',
 ]
 
 # --- Accounting segment mappings (documentation/csv_rules) ---------------------------------------
 # Account Segment 1 = company code, Segment 2 = cost center — both keyed on the contractor's company
-# (RAC vs ACIMA). Segment 3 = the CapEx/OpEx GL code; Segment 4 = the CapEx/OpEx label.
+# (RAC vs ACIMA). Segment 3 = the CapEx/OpEx GL code. (We emit only the CODE, never a CapEx/OpEx label.)
 COMPANY_CODE = {"RAC": "5", "ACIMA": "67"}
 COST_CENTER = {"RAC": "H0003", "ACIMA": "AC000"}
 CAPEX_OPEX_CODE = {"CAPEX": "246010", "OPEX": "667070"}
@@ -224,32 +300,19 @@ def supplier_number_for(vendor_name: str | None) -> str | None:
     hit = process.extractOne(norm, names, scorer=fuzz.token_sort_ratio, score_cutoff=_SUPPLIER_FUZZY_CUTOFF)
     return numbers[hit[2]] if hit else None
 
-# --- Placeholder tokens for data we can't source yet --------------------------------------------
-# Swap each of these out for a real lookup (config/mapping table) once that data is available.
-_PLACEHOLDER = {
-    "supplier_number": "<<SUPPLIER_NUMBER>>",
-    "chart_of_accounts": "<<CHART_OF_ACCOUNTS>>",
-    "requester_email": "<<APPROVER_EMAIL>>",
-    "requester_name": "<<APPROVER_NAME>>",
-    "company_code": "<<COMPANY_CODE>>",
-    "cost_center": "<<COST_CENTER>>",
-    "capex_opex_code": "<<CAPEX_OPEX_CODE>>",
-    "capex_opex_label": "<<CAPEX_OPEX>>",
-}
 
-# --- MVP header defaults (documentation/csv_rules "Recommended Header Defaults") -----------------
-STATUS_DEFAULT = "draft"
+# --- Fixed values (documentation/csv_rules) ------------------------------------------------------
 CURRENCY_DEFAULT = "USD"
 UNIT_OF_MEASURE = "HOUR"
-CATEGORY_DEFAULT = "Contractor Services"
 LINE_LEVEL_TAXATION = "no"
-SUBMIT_FOR_APPROVAL = "no"  # per csv_rules: default to no until the workflow is trusted
-# Chart of Accounts for a fully-matched invoice (no issues). Drafts/flagged keep the placeholder.
-CHART_OF_ACCOUNTS_MATCHED = "321080-RT000"
+SUBMIT_FOR_APPROVAL = "No"          # per csv_rules: default to No until the workflow is trusted
+# Chart of Accounts value — the literal name of the Coupa Chart of Accounts, exactly as in
+# documentation/Coupa sample invoice.xlsx. Used for a fully-matched invoice; drafts/flagged leave it blank.
+CHART_OF_ACCOUNTS_MATCHED = "Chart of Accounts"
 
 
 def _fmt_date(d: date | None) -> str:
-    """Coupa dates are MM/DD/YYYY (see Final CSV.txt)."""
+    """Coupa dates are MM/DD/YYYY."""
     return d.strftime("%m/%d/%Y") if d else ""
 
 
@@ -262,13 +325,6 @@ def _fmt_num(n: float | None) -> str:
     if n is None:
         return ""
     return str(int(n)) if float(n).is_integer() else str(n)
-
-
-def _invoice_total(inv: models.Invoice) -> float:
-    """Net/gross amount: the parsed invoice total, else the sum of line amounts."""
-    if inv.total_invoice_cost is not None:
-        return inv.total_invoice_cost
-    return round(sum((li.amount or 0.0) for li in inv.line_items), 2)
 
 
 def _project_for(li: models.InvoiceLineItem, db: Session | None) -> models.ClarityProject | None:
@@ -285,7 +341,7 @@ def _company_for_project(project_id: str | None, investment_name: str | None) ->
     """Resolve a project's company ('RAC' | 'ACIMA').
 
     Primary: the project's Line of Business in Company_by_Project.csv, keyed by Project ID.
-    Fallback: infer from the project name. None when neither resolves (caller emits a placeholder).
+    Fallback: infer from the project name. None when neither resolves (caller leaves segments blank).
     """
     if project_id:
         company = _project_company_map().get(project_id)
@@ -325,12 +381,15 @@ def _capex_opex_for(
 
 
 def _segment_values(company: str | None, capex_opex: str | None) -> dict[str, str]:
-    """The four Account Segment values for a (company, CapEx/OpEx) pair, with placeholders for gaps."""
+    """The three Account Segment values for a (company, CapEx/OpEx) pair; blank where unresolved.
+
+    Segment 1 = company code, Segment 2 = cost center, Segment 3 = CapEx/OpEx GL code (code only —
+    no CapEx/OpEx label is written).
+    """
     return {
-        "Account Segment 1": COMPANY_CODE.get(company, _PLACEHOLDER["company_code"]),
-        "Account Segment 2": COST_CENTER.get(company, _PLACEHOLDER["cost_center"]),
-        "Account Segment 3": CAPEX_OPEX_CODE.get(capex_opex, _PLACEHOLDER["capex_opex_code"]),
-        "Account Segment 4": capex_opex or _PLACEHOLDER["capex_opex_label"],
+        "Account Segment 1": COMPANY_CODE.get(company, ""),
+        "Account Segment 2": COST_CENTER.get(company, ""),
+        "Account Segment 3": CAPEX_OPEX_CODE.get(capex_opex, ""),
     }
 
 
@@ -366,7 +425,7 @@ def _clarity_company_breakdown(
 
 
 def _line_description(li: models.InvoiceLineItem, inv: models.Invoice) -> str:
-    """'Contractor — Project — start-end' (the user-chosen line description shape).
+    """'Contractor - Project - start-end' (the user-chosen line description shape).
 
     Project name comes from the matched Clarity timesheet's investment; omitted if unknown.
     Period falls back to the invoice period when the line carries no per-line dates.
@@ -383,62 +442,44 @@ def _line_description(li: models.InvoiceLineItem, inv: models.Invoice) -> str:
 
 
 def build_header_row(inv: models.Invoice, *, matched_only: bool = False) -> dict[str, str]:
-    """The single `Invoice` header data row, keyed by column name.
+    """The single `Invoice` header data row, keyed by column name (only populated fields are set;
+    every other column defaults to blank when the row is emitted).
 
     A fully-matched invoice gets the real Chart of Accounts; a draft (flagged invoice, matched lines
-    only) keeps the placeholder since it isn't a clean match.
+    only) leaves it blank since it isn't a clean match. Status is always blank.
     """
-    total = _invoice_total(inv)
-    matched = sum(1 for li in inv.line_items if li.line_status == models.STATUS_MATCHED)
     is_clean_match = inv.status == models.STATUS_MATCHED
-    note = (
-        f"Automated Clarity match: {inv.status}; {matched}/{len(inv.line_items)} line(s) matched."
-        + (" Draft: matched contractors only." if matched_only else "")
-    )
-    chart = CHART_OF_ACCOUNTS_MATCHED if is_clean_match else _PLACEHOLDER["chart_of_accounts"]
     return {
         "Invoice": "Invoice",
-        "Invoice Number": inv.invoice_number or "",
-        "Supplier Number": supplier_number_for(inv.vendor_name) or _PLACEHOLDER["supplier_number"],
+        "Invoice Number*": inv.invoice_number or "",
         "Supplier Name": inv.vendor_name or "",
-        "Status": STATUS_DEFAULT,
-        "Invoice Date": _fmt_date(inv.date_received),
+        "Supplier Number": supplier_number_for(inv.vendor_name) or "",
+        "Status": "",
+        "Invoice Date*": _fmt_date(inv.date_received),
         "Submit For Approval?": SUBMIT_FOR_APPROVAL,
-        "Line Level Taxation": LINE_LEVEL_TAXATION,
-        "Chart of Accounts": chart,
+        "Line Level Taxation*": LINE_LEVEL_TAXATION,
+        "Chart of Accounts*": CHART_OF_ACCOUNTS_MATCHED if is_clean_match else "",
         "Currency": CURRENCY_DEFAULT,
-        "Requester Email": _PLACEHOLDER["requester_email"],
-        "Requester Name": _PLACEHOLDER["requester_name"],
-        "Payment Terms": "",
-        "Supplier Note": note,
-        "Image Scan Url": "",                             # invoice-PDF S3 URL — added in a later phase
-        "Local Currency Net": _fmt_money(total),          # net == gross (no tax, MVP rule)
-        "Taxes In Origin Country Currency": "0.00",
     }
 
 
 def _line_row(
     inv: models.Invoice, li: models.InvoiceLineItem, line_no: int, *,
-    hours: float | None, description: str, segments: dict[str, str], billing: str,
+    hours: float | None, description: str, segments: dict[str, str],
 ) -> dict[str, str]:
-    """Assemble one `Invoice Line` row. Price is the invoice rate; Amount = hours x rate."""
-    amount = round(hours * li.rate, 2) if hours is not None and li.rate is not None else None
+    """Assemble one `Invoice Line` row. Price* is the invoice rate, Quantity the hours — Coupa
+    computes the line total (rate x hours) from them."""
     return {
         "Invoice Line": "Invoice Line",
-        "Invoice Number": inv.invoice_number or "",
-        "Supplier Number": supplier_number_for(inv.vendor_name) or _PLACEHOLDER["supplier_number"],
+        "Invoice Number*": inv.invoice_number or "",
         "Supplier Name": inv.vendor_name or "",
+        "Supplier Number": supplier_number_for(inv.vendor_name) or "",
         "Line Number": str(line_no),
-        "Description": description,
-        "Price": _fmt_money(li.rate),
+        "Description*": description,
+        "Price*": _fmt_money(li.rate),
         "Quantity": _fmt_num(hours),
-        "Unit of Measure": UNIT_OF_MEASURE,
-        "Category": CATEGORY_DEFAULT,
-        "PO Number": "",
-        "PO Line Number": "",
-        "Account Code": "",
+        "Unit of Measure*": UNIT_OF_MEASURE,
         **segments,
-        "Billing Notes": billing,
     }
 
 
@@ -472,10 +513,9 @@ def build_line_rows(
             ):
                 label = " ".join(p for p in (company, capex_opex) if p) or "unclassified"
                 desc = " - ".join(p for p in (name, label, period) if p)
-                billing = f"Clarity {_fmt_num(hours)}h posted on {label} project(s); split line"
                 rows.append(
                     _line_row(inv, li, line_no, hours=hours, description=desc,
-                              segments=_segment_values(company, capex_opex), billing=billing)
+                              segments=_segment_values(company, capex_opex))
                 )
                 line_no += 1
             continue
@@ -483,18 +523,9 @@ def build_line_rows(
         # Single bucket (or no Clarity breakdown): one line using the invoice's own hours.
         project = _project_for(li, db)
         segments = _segment_values(_company_for(li), _capex_opex_for(li, project))
-        clarity_hours = None
-        if li.diff and isinstance(li.diff, dict):
-            v = li.diff.get("clarity_hours")
-            clarity_hours = v if isinstance(v, (int, float)) else None
-        billing = (
-            f"Clarity {_fmt_num(clarity_hours)}h posted; line {li.line_status or 'n/a'}"
-            if clarity_hours is not None
-            else f"Line {li.line_status or 'n/a'}"
-        )
         rows.append(
             _line_row(inv, li, line_no, hours=li.hours, description=_line_description(li, inv),
-                      segments=segments, billing=billing)
+                      segments=segments)
         )
         line_no += 1
     return rows
@@ -505,19 +536,23 @@ def coupa_csv_bytes(
 ) -> bytes:
     """Render the Coupa import CSV for one invoice as UTF-8 bytes (BOM for Excel/Coupa).
 
+    Layout matches documentation/Coupa sample invoice.xlsx: the two record-type schema rows, then the
+    `Invoice` header data row, then one `Invoice Line` row per contractor line item. Unpopulated
+    columns are emitted blank.
+
     `matched_only=True` produces a DRAFT for a flagged invoice: only matched contractors get lines.
     """
     buf = io.StringIO(newline="")
     writer = csv.writer(buf)
 
-    # Two column-schema rows up top, exactly like documentation/Final CSV.txt.
+    # Two record-type schema rows up top, exactly like the sample workbook.
     writer.writerow(INVOICE_HEADER_COLUMNS)
     writer.writerow(INVOICE_LINE_COLUMNS)
 
     header = build_header_row(inv, matched_only=matched_only)
-    writer.writerow([header[c] for c in INVOICE_HEADER_COLUMNS])
+    writer.writerow([header.get(c, "") for c in INVOICE_HEADER_COLUMNS])
     for row in build_line_rows(inv, db, matched_only=matched_only):
-        writer.writerow([row[c] for c in INVOICE_LINE_COLUMNS])
+        writer.writerow([row.get(c, "") for c in INVOICE_LINE_COLUMNS])
 
     return buf.getvalue().encode("utf-8-sig")
 

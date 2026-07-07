@@ -128,7 +128,10 @@ def dashboard(db: Session = Depends(get_db)) -> DashboardResponse:
     """
     invoices = db.scalars(
         select(models.Invoice)
-        .where(models.Invoice.archived_at.is_(None))
+        .where(
+            models.Invoice.archived_at.is_(None),
+            models.Invoice.invoice_type == models.INVOICE_TYPE_CONTRACTOR,
+        )
         .order_by(models.Invoice.created_at.desc())
     ).all()
     summaries = [_summary(i) for i in invoices]
@@ -299,6 +302,7 @@ def bulk_export_matched(db: Session = Depends(get_db)) -> StreamingResponse:
         .where(
             models.Invoice.status == models.STATUS_MATCHED,
             models.Invoice.archived_at.is_(None),
+            models.Invoice.invoice_type == models.INVOICE_TYPE_CONTRACTOR,
         )
         .order_by(models.Invoice.created_at.desc())
     ).all()
@@ -337,7 +341,11 @@ def history(db: Session = Depends(get_db)) -> list[InvoiceSummary]:
     Deleted invoices are gone from the DB, so they don't appear. Re-uploads reuse the same row
     (idempotent on invoice number), so the same invoice never appears twice.
     """
-    invoices = db.scalars(select(models.Invoice).order_by(models.Invoice.created_at.desc())).all()
+    invoices = db.scalars(
+        select(models.Invoice)
+        .where(models.Invoice.invoice_type == models.INVOICE_TYPE_CONTRACTOR)
+        .order_by(models.Invoice.created_at.desc())
+    ).all()
     return [_summary(i) for i in invoices]
 
 

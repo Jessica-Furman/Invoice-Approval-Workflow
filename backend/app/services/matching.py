@@ -360,7 +360,11 @@ def match_invoice(db: Session, invoice: models.Invoice, index: ClarityIndex) -> 
 
 def match_all(db: Session) -> dict:
     index = ClarityIndex.build(db)
-    invoices = db.scalars(select(models.Invoice)).all()
+    # Only contractor invoices are matched against Clarity; "other" (hardware/software) invoices
+    # have their own pipeline and must never be touched here.
+    invoices = db.scalars(
+        select(models.Invoice).where(models.Invoice.invoice_type == models.INVOICE_TYPE_CONTRACTOR)
+    ).all()
     counts = {models.STATUS_MATCHED: 0, models.STATUS_FLAGGED: 0, models.STATUS_FAILED: 0}
     for inv in invoices:
         match_invoice(db, inv, index)

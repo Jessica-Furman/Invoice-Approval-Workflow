@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import clarity, invoices
+from app.api import clarity, invoices, other_invoices
 from app.config import settings
 from app.db.base import init_db
 
@@ -35,3 +35,4 @@ def health() -> dict[str, str]:
 
 app.include_router(invoices.router)
 app.include_router(clarity.router)
+app.include_router(other_invoices.router)

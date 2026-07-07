@@ -80,44 +80,45 @@ def test_csv_has_schema_rows_then_header_then_lines(db: Session):
     assert len(rows) == 4                            # single-line invoice
 
 
-def test_header_values_and_tax_defaults(db: Session):
+def test_header_values_and_defaults(db: Session):
     inv = _matched_invoice(db)
     h = build_header_row(inv)
-    assert h["Invoice Number"] == "INV-100"
+    assert h["Invoice Number*"] == "INV-100"
     assert h["Supplier Name"] == "AVASOFT"
-    assert h["Invoice Date"] == "05/31/2026"
+    assert h["Invoice Date*"] == "05/31/2026"
     assert h["Currency"] == "USD"
-    assert h["Submit For Approval?"] == "no"
-    assert h["Line Level Taxation"] == "no"
-    assert h["Taxes In Origin Country Currency"] == "0.00"
-    assert h["Local Currency Net"] == "3800.00"
-    # Blueprint dropped Local Currency Gross / Attachment 1; added Image Scan Url.
-    assert "Local Currency Gross" not in INVOICE_HEADER_COLUMNS
-    assert "Image Scan Url" in INVOICE_HEADER_COLUMNS
+    assert h["Submit For Approval?"] == "No"
+    assert h["Line Level Taxation*"] == "no"
+    assert h["Status"] == ""                     # Status must be blank (never "Draft")
+    # Full Coupa template: exactly the sample workbook's 177 / 73 columns, with asterisks kept.
+    assert len(INVOICE_HEADER_COLUMNS) == 177 and INVOICE_HEADER_COLUMNS[0] == "Invoice"
+    assert len(INVOICE_LINE_COLUMNS) == 73 and INVOICE_LINE_COLUMNS[0] == "Invoice Line"
+    assert "Chart of Accounts*" in INVOICE_HEADER_COLUMNS
+    assert "Description*" in INVOICE_LINE_COLUMNS and "Price*" in INVOICE_LINE_COLUMNS
 
 
 def test_line_maps_hours_rate_and_description(db: Session):
     inv = _matched_invoice(db)
     rows = _parse(coupa_csv_bytes(inv, db))
     line = dict(zip(INVOICE_LINE_COLUMNS, rows[3]))
-    assert line["Quantity"] == "40"
-    assert line["Price"] == "95.00"
-    assert line["Unit of Measure"] == "HOUR"
-    assert line["Category"] == "Contractor Services"
+    assert line["Quantity"] == "40"                 # hours
+    assert line["Price*"] == "95.00"                # rate; Coupa computes total = price x qty
+    assert line["Unit of Measure*"] == "HOUR"
+    assert line["PO Number"] == "" and line["PO Line Number"] == ""  # PO columns left blank
     # Description = contractor - project - period
-    assert "Jane Doe" in line["Description"]
-    assert "Project Alpha" in line["Description"]
-    assert "05/01/2026-05/31/2026" in line["Description"]
+    assert "Jane Doe" in line["Description*"]
+    assert "Project Alpha" in line["Description*"]
+    assert "05/01/2026-05/31/2026" in line["Description*"]
 
 
-def test_capex_segments_map_to_gl_code_and_label(db: Session):
-    # "Project Alpha" has no RAC/ACIMA signal -> company segments fall back to placeholders.
+def test_capex_segment_is_code_only_and_unresolved_company_is_blank(db: Session):
+    # "Project Alpha" has no RAC/ACIMA signal -> company segments are left BLANK (no placeholders).
     inv = _matched_invoice(db, investment="Project Alpha", capex="CAPEX")
     line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
-    assert line["Account Segment 1"] == "<<COMPANY_CODE>>"
-    assert line["Account Segment 2"] == "<<COST_CENTER>>"
-    assert line["Account Segment 3"] == "246010"   # CAPEX GL code
-    assert line["Account Segment 4"] == "CAPEX"     # label
+    assert line["Account Segment 1"] == ""         # company unresolved -> blank
+    assert line["Account Segment 2"] == ""
+    assert line["Account Segment 3"] == "246010"   # CAPEX GL code (code only)
+    assert line["Account Segment 4"] == ""         # no CapEx/OpEx label is written
 
 
 def test_rac_project_maps_company_and_cost_center(db: Session):
@@ -126,7 +127,6 @@ def test_rac_project_maps_company_and_cost_center(db: Session):
     assert line["Account Segment 1"] == "5"        # RAC company code
     assert line["Account Segment 2"] == "H0003"    # RAC cost center
     assert line["Account Segment 3"] == "667070"   # OPEX GL code
-    assert line["Account Segment 4"] == "OPEX"
 
 
 def test_acima_project_maps_company_and_cost_center(db: Session):
@@ -234,8 +234,8 @@ def test_split_contractor_into_one_line_per_company(db: Session, monkeypatch):
     by = {dict(zip(INVOICE_LINE_COLUMNS, r))["Account Segment 1"]: dict(zip(INVOICE_LINE_COLUMNS, r))
           for r in line_rows}
     rac, aci = by["5"], by["67"]
-    # RAC line: 30 Clarity hours, RAC cost center; amount = 30 x invoice rate 100.
-    assert rac["Quantity"] == "30" and rac["Account Segment 2"] == "H0003" and rac["Price"] == "100.00"
+    # RAC line: 30 Clarity hours, RAC cost center; total = 30 x invoice rate 100 (Coupa computes it).
+    assert rac["Quantity"] == "30" and rac["Account Segment 2"] == "H0003" and rac["Price*"] == "100.00"
     # ACIMA line: 40 hours, ACIMA cost center.
     assert aci["Quantity"] == "40" and aci["Account Segment 2"] == "AC000"
     # Line numbers are sequential across the split.
@@ -253,13 +253,13 @@ def test_single_company_contractor_stays_one_line(db: Session, monkeypatch):
 
 def test_matched_invoice_gets_real_chart_of_accounts(db: Session):
     inv = _matched_invoice(db)  # status == matched
-    assert build_header_row(inv)["Chart of Accounts"] == "321080-RT000"
+    assert build_header_row(inv)["Chart of Accounts*"] == "Chart of Accounts"
 
 
-def test_flagged_invoice_keeps_chart_placeholder(db: Session):
+def test_flagged_invoice_leaves_chart_blank(db: Session):
     inv = _matched_invoice(db)
     inv.status = models.STATUS_FLAGGED
-    assert build_header_row(inv)["Chart of Accounts"] == "<<CHART_OF_ACCOUNTS>>"
+    assert build_header_row(inv)["Chart of Accounts*"] == ""
 
 
 def test_draft_csv_includes_only_matched_contractors(db: Session):
@@ -276,9 +276,9 @@ def test_draft_csv_includes_only_matched_contractors(db: Session):
     descriptions = " ".join(r[5] for r in line_rows)
     assert "Jane Doe" in descriptions            # matched contractor IS included
     assert "Unmatched Person" not in descriptions  # unmatched contractor is OMITTED
-    # Draft of a flagged invoice keeps the Chart of Accounts placeholder.
+    # Draft of a flagged invoice leaves the Chart of Accounts blank (not a clean match).
     header = dict(zip(INVOICE_HEADER_COLUMNS, rows[2]))
-    assert header["Chart of Accounts"] == "<<CHART_OF_ACCOUNTS>>"
+    assert header["Chart of Accounts*"] == ""
 
 
 def test_draft_filename_is_prefixed(db: Session):
@@ -286,12 +286,14 @@ def test_draft_filename_is_prefixed(db: Session):
     assert coupa_csv_filename(inv, draft=True) == "DRAFT_AVASOFT_INV-100.csv"
 
 
-def test_unknown_fields_are_placeholder_tokens(db: Session):
+def test_unknown_fields_are_left_blank(db: Session):
+    # We no longer emit placeholder tokens: fields we can't source are simply blank in the CSV.
     inv = _matched_invoice(db)
-    h = build_header_row(inv)
-    assert h["Requester Email"] == "<<APPROVER_EMAIL>>"
-    assert h["Requester Name"] == "<<APPROVER_NAME>>"
-    assert h["Chart of Accounts"]  # resolved or placeholder, but present
+    header = dict(zip(INVOICE_HEADER_COLUMNS, _parse(coupa_csv_bytes(inv, db))[2]))
+    assert header["Requester Email"] == ""
+    assert header["Requester Name"] == ""
+    assert header["PO Number"] == "" if "PO Number" in header else True  # no PO on the header
+    assert header["Batch ID"] == ""
 
 
 def test_load_supplier_index_normalizes_names(tmp_path):
