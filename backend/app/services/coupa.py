@@ -15,8 +15,8 @@ Each data row is tagged in its first cell by record type ("Invoice" / "Invoice L
 aligned to that type's schema row. Only the fields we have are populated:
 
     Header : Invoice Number*, Supplier Name/Number, Invoice Date*, Submit For Approval?,
-             Line Level Taxation*, Chart of Accounts* (matched only), Currency.
-             Status is intentionally BLANK.
+             Line Level Taxation*, Requester Name (the approver, from the copy tracker),
+             Chart of Accounts* (matched only), Currency. Status is intentionally BLANK.
     Line   : Line Number, Description*, Price* (rate), Quantity (hours), Unit of Measure* (HOUR),
              Account Segment 1 (company code), 2 (cost center), 3 (CapEx/OpEx GL code).
              PO / Requester / CapEx-OpEx-label columns exist in the schema but are left blank.
@@ -301,9 +301,113 @@ def supplier_number_for(vendor_name: str | None) -> str | None:
     return numbers[hit[2]] if hit else None
 
 
+# --- Approver lookup (documentation/2026_Copy Tracker.xlsx) --------------------------------------
+# The copy tracker is the running log of every invoice already filed: one row per allocation line, with
+# the invoice's Vendor, Invoice Number, and the person who "Approved By" it. When we generate a Coupa CSV
+# we look the approver up by (vendor, invoice number) and drop the name into the sample's "<<Approver
+# Name>>" placeholder — the "Requester Name" column. Invoice number is the strong key (vendor names vary
+# between the tracker and a parsed invoice), disambiguated by vendor only when a number is shared.
+COPY_TRACKER_XLSX = REPO_ROOT / "documentation" / "2026_Copy Tracker.xlsx"
+_APPROVER_VENDOR_CUTOFF = 80  # token_sort_ratio for picking among same-invoice-number vendor variants
+
+
+def _norm_invno(value: object) -> str:
+    """Canonical key for an invoice number across the tracker (may be int/float) and our text: as a
+    string, integer-valued floats de-pointed (6347.0 -> '6347'), lowercased, inner whitespace dropped."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return re.sub(r"\s+", "", str(value).strip().lower())
+
+
+def _load_approver_index(path: Path) -> dict[str, list[tuple[str, str]]]:
+    """Read the copy tracker into {normalized invoice number -> [(normalized vendor, approver), ...]}.
+
+    Only the Vendor, Invoice Number, and Approved By columns are read. Rows without an invoice number or
+    an approver are skipped. Duplicate (vendor, approver) pairs per number are collapsed.
+    """
+    index: dict[str, list[tuple[str, str]]] = {}
+    if not path.exists():
+        return index
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return index
+    try:
+        ws = wb[wb.sheetnames[0]]
+        rows = ws.iter_rows(values_only=True)
+        header = next(rows, None)
+        if not header:
+            return index
+        cols = {str(h).strip(): i for i, h in enumerate(header) if h is not None}
+        vi = cols.get("Vendor")
+        # Header cell is literally "Invoice Number"; "Approved By" holds the approver.
+        ii = cols.get("Invoice Number")
+        ai = cols.get("Approved By")
+        if ii is None or ai is None:
+            return index
+        for row in rows:
+            if ii >= len(row) or ai >= len(row):
+                continue
+            invno = _norm_invno(row[ii])
+            approver = (str(row[ai]).strip() if row[ai] is not None else "")
+            if not invno or not approver:
+                continue
+            vendor = _normalize_supplier_name(str(row[vi])) if vi is not None and vi < len(row) else ""
+            bucket = index.setdefault(invno, [])
+            pair = (vendor, approver)
+            if pair not in bucket:
+                bucket.append(pair)
+    finally:
+        wb.close()
+    return index
+
+
+@lru_cache(maxsize=1)
+def _approver_index() -> dict[str, list[tuple[str, str]]]:
+    return _load_approver_index(COPY_TRACKER_XLSX)
+
+
+@lru_cache(maxsize=512)
+def approver_for(vendor_name: str | None, invoice_number: str | None) -> str | None:
+    """The approver ("Approved By") for an invoice from the copy tracker, or None if not found.
+
+    Matched by invoice number first. If several tracker rows share that number, the vendor picks between
+    them: exact normalized vendor match, else a high-confidence fuzzy match; if the vendor can't be told
+    apart but every candidate shares one approver, that approver is returned.
+    """
+    invno = _norm_invno(invoice_number)
+    if not invno:
+        return None
+    candidates = _approver_index().get(invno)
+    if not candidates:
+        return None
+    approvers = {a for _, a in candidates}
+    if len(approvers) == 1:  # unambiguous regardless of vendor
+        return next(iter(approvers))
+
+    norm_vendor = _normalize_supplier_name(vendor_name)
+    if norm_vendor:
+        for vendor, approver in candidates:
+            if vendor == norm_vendor:
+                return approver
+        from rapidfuzz import fuzz, process
+
+        vendors = [v for v, _ in candidates]
+        hit = process.extractOne(
+            norm_vendor, vendors, scorer=fuzz.token_sort_ratio, score_cutoff=_APPROVER_VENDOR_CUTOFF
+        )
+        if hit:
+            return candidates[hit[2]][1]
+    return None
+
+
 # --- Fixed values (documentation/csv_rules) ------------------------------------------------------
 CURRENCY_DEFAULT = "USD"
-UNIT_OF_MEASURE = "HOUR"
+UNIT_OF_MEASURE = "EA"  # Unit of Measure* — matches documentation/Coupa sample invoice.xlsx ("EA")
 LINE_LEVEL_TAXATION = "no"
 SUBMIT_FOR_APPROVAL = "No"          # per csv_rules: default to No until the workflow is trusted
 # Chart of Accounts value — the literal name of the Coupa Chart of Accounts, exactly as in
@@ -458,6 +562,8 @@ def build_header_row(inv: models.Invoice, *, matched_only: bool = False) -> dict
         "Invoice Date*": _fmt_date(inv.date_received),
         "Submit For Approval?": SUBMIT_FOR_APPROVAL,
         "Line Level Taxation*": LINE_LEVEL_TAXATION,
+        # Approver from the copy tracker fills the sample's "<<Approver Name>>" (Requester Name) cell.
+        "Requester Name": approver_for(inv.vendor_name, inv.invoice_number) or "",
         "Chart of Accounts*": CHART_OF_ACCOUNTS_MATCHED if is_clean_match else "",
         "Currency": CURRENCY_DEFAULT,
     }

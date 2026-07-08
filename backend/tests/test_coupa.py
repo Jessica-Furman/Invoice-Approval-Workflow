@@ -103,7 +103,7 @@ def test_line_maps_hours_rate_and_description(db: Session):
     line = dict(zip(INVOICE_LINE_COLUMNS, rows[3]))
     assert line["Quantity"] == "40"                 # hours
     assert line["Price*"] == "95.00"                # rate; Coupa computes total = price x qty
-    assert line["Unit of Measure*"] == "HOUR"
+    assert line["Unit of Measure*"] == "EA"
     assert line["PO Number"] == "" and line["PO Line Number"] == ""  # PO columns left blank
     # Description = contractor - project - period
     assert "Jane Doe" in line["Description*"]
@@ -294,6 +294,49 @@ def test_unknown_fields_are_left_blank(db: Session):
     assert header["Requester Name"] == ""
     assert header["PO Number"] == "" if "PO Number" in header else True  # no PO on the header
     assert header["Batch ID"] == ""
+
+
+def test_approver_from_tracker_fills_requester_name(db: Session, monkeypatch):
+    # The copy tracker maps (vendor, invoice number) -> approver; it lands in the Requester Name cell
+    # (the sample's "<<Approver Name>>" placeholder).
+    from app.services.coupa import approver_for
+
+    approver_for.cache_clear()
+    monkeypatch.setattr(
+        coupa, "_approver_index",
+        lambda: {"inv-100": [("avasoft", "Oscar Trelles")]},
+    )
+    inv = _matched_invoice(db)  # vendor AVASOFT, invoice INV-100
+    header = dict(zip(INVOICE_HEADER_COLUMNS, _parse(coupa_csv_bytes(inv, db))[2]))
+    assert header["Requester Name"] == "Oscar Trelles"
+    assert header["Requester Email"] == ""  # only the name is sourced; email stays blank
+    approver_for.cache_clear()
+
+
+def test_approver_unambiguous_by_invoice_number(monkeypatch):
+    from app.services.coupa import approver_for
+
+    approver_for.cache_clear()
+    # One invoice number, one approver -> resolved even if the vendor name doesn't match exactly.
+    monkeypatch.setattr(coupa, "_approver_index", lambda: {"6347": [("advanced communications group", "Oscar Trelles")]})
+    assert approver_for("Advanced Comms Group LLC", "6347") == "Oscar Trelles"
+    assert approver_for("Anyone", 6347) == "Oscar Trelles"       # numeric invoice number too
+    assert approver_for("Anyone", "ZZZ") is None                  # unknown number -> None
+    approver_for.cache_clear()
+
+
+def test_approver_disambiguated_by_vendor_when_number_shared(monkeypatch):
+    from app.services.coupa import approver_for
+
+    approver_for.cache_clear()
+    # Same invoice number used by two vendors -> vendor picks the approver.
+    monkeypatch.setattr(
+        coupa, "_approver_index",
+        lambda: {"2026-001": [("amandh solutions", "Juan Rajani"), ("other vendor", "Someone Else")]},
+    )
+    assert approver_for("Amandh Solutions", "2026-001") == "Juan Rajani"
+    assert approver_for("Other Vendor", "2026-001") == "Someone Else"
+    approver_for.cache_clear()
 
 
 def test_load_supplier_index_normalizes_names(tmp_path):
