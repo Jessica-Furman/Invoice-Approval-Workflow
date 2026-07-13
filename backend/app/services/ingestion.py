@@ -154,7 +154,7 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
     Line items reuse the shared columns as storage: `contractor_name`=service description,
     `hours`=quantity, `rate`=unit price, `amount`=amount.
     """
-    from app.services.coupa import supplier_number_for
+    from app.services.coupa import supplier_number_for, tracking_accounting_for
     from app.services.parsing.other_rules import parse_other_invoice, required_missing_fields
 
     storage = storage or LocalStorage(settings.STORAGE_DIR)
@@ -163,6 +163,8 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
 
     storage_key = storage.put_file(pdf_path)
     supplier_number = supplier_number_for(p.vendor_name)
+    # Cost center + offset GL account (CapEx/OpEx code), routed by invoice number in the copy tracker.
+    accounting = tracking_accounting_for(p.invoice_number)
     missing = required_missing_fields(p, supplier_number)
     status = models.STATUS_MISSING_DATA if missing else models.STATUS_ALL_DATA_FOUND
 
@@ -198,6 +200,8 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
     inv.raw_extraction = {
         "method": result.method,
         "supplier_number": supplier_number,
+        "cost_center": accounting["cost_center"],
+        "offset_gl_account": accounting["offset_gl_account"],
         "missing_fields": missing,
         "parsed": p.model_dump(mode="json"),
         "warnings": result.warnings,

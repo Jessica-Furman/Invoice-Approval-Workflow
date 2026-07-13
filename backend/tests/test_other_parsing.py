@@ -11,7 +11,9 @@ import pytest
 
 from app.schemas import ParsedOtherInvoice, ParsedOtherLineItem
 from app.services.parsing.other_rules import (
+    _email_domain_vendors,
     _extract_total,
+    _line_items_from_tables,
     _line_items_from_text,
     _parse_other_table,
     parse_other_invoice,
@@ -103,6 +105,25 @@ def test_table_parser_maps_columns_and_skips_footer():
     assert items[0].quantity == 2 and items[0].unit_price == 10.0 and items[0].amount == 20.0
 
 
+def test_summary_table_beats_bigger_detail_appendix():
+    # CyrusOne case: the billing-summary table has 1 row with a real "Description" column; a per-ticket
+    # appendix has MORE rows but only a weaker "Service Type" column. The summary must win.
+    summary = [
+        ["QTY", "LOCATION", "ITEM NUMBER", "SERVICE PERIOD", "DESCRIPTION", "CHARGE", "TAX", "TOTAL"],
+        ["0.00", "2501 South State Hwy", "CON201-N", "04/01 - 04/30", "Smarthands - OP", "$75.00", "$0.00", "$75.00"],
+    ]
+    appendix = [
+        ["Ticket ID", "Date Solved", "Service Type", "Requester", "Billable Hours", "Rate", "Charge Amount"],
+        ["3442377", "04-01-2026", "Shipping::Accept & Notify", "Clinton Snow", "0.25", "100.00", "$25.00"],
+        ["3460182", "04-15-2026", "Shipping::Accept & Notify", "Clinton Snow", "0.25", "100.00", "$25.00"],
+        ["3463453", "04-17-2026", "Shipping::Accept & Notify", "Clinton Snow", "0.25", "100.00", "$25.00"],
+    ]
+    # Appendix listed first and has 3x the rows, but the summary table still wins on desc-column strength.
+    items = _line_items_from_tables([appendix, summary])
+    assert len(items) == 1
+    assert items[0].description == "Smarthands - OP" and items[0].amount == 75.0
+
+
 def test_table_parser_prefers_service_description_over_item_code():
     table = [
         ["Item", "Service Description", "Amount"],
@@ -130,6 +151,34 @@ def test_text_fallback_pairs_description_with_amount():
     descs = [i.description for i in items]
     assert "GitHub Actions Usage" in descs and "GitHub Copilot Usage" in descs
     assert {i.amount for i in items} == {469.26, 4266.04}  # totals/subtotal excluded
+
+
+# --- vendor from email domain (billing-shell letterhead) -------------------------------------
+def test_email_domain_vendor_candidates_case_and_skips_banks():
+    text = (
+        "C1 Ground Tenant LLC\n"
+        "PNC Bank\n"
+        "Direct questions to accountsreceivable@cyrusone.com or invoicing@cyrusone.com\n"
+        "footer brand CyrusOne * Dallas, TX\n"
+    )
+    cands = _email_domain_vendors(text)
+    assert "CyrusOne" in cands          # cased from the text occurrence, not "cyrusone"
+    assert all("pnc" not in c.lower() for c in cands)  # remit bank domain skipped
+
+
+@pytest.mark.skipif(
+    not (SAMPLE_DIR / "CyrusOne_900000255559-2026-05-28_07-39-43.pdf").exists() or not SUPPLIER_CSV.exists(),
+    reason="CyrusOne sample or supplier list absent",
+)
+def test_cyrusone_uses_brand_not_billing_shell():
+    # The text letterhead is the billing shell "C1 Ground Tenant LLC" (not a supplier); the parser
+    # must fall back to the email-domain brand "CyrusOne", which IS in the supplier list.
+    from app.services.coupa import supplier_number_for
+
+    r = parse_other_invoice(str(SAMPLE_DIR / "CyrusOne_900000255559-2026-05-28_07-39-43.pdf"))
+    assert r.parsed.vendor_name == "CyrusOne"
+    assert "C1 Ground Tenant" not in (r.parsed.vendor_name or "")
+    assert supplier_number_for(r.parsed.vendor_name) is not None
 
 
 # --- sample PDFs --------------------------------------------------------------------------------

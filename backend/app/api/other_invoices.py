@@ -31,9 +31,13 @@ from app.services.storage import LocalStorage
 router = APIRouter(prefix="/api/other", tags=["other-invoices"])
 
 
-def _supplier_number(inv: models.Invoice) -> str | None:
+def _raw(inv: models.Invoice) -> dict:
     raw = inv.raw_extraction or {}
-    return raw.get("supplier_number") if isinstance(raw, dict) else None
+    return raw if isinstance(raw, dict) else {}
+
+
+def _supplier_number(inv: models.Invoice) -> str | None:
+    return _raw(inv).get("supplier_number")
 
 
 def _missing_fields(inv: models.Invoice) -> list[str]:
@@ -49,6 +53,8 @@ def _summary(inv: models.Invoice) -> OtherInvoiceSummary:
         total_invoice_cost=inv.total_invoice_cost,
         status=inv.status,
         supplier_number=_supplier_number(inv),
+        cost_center=_raw(inv).get("cost_center"),
+        offset_gl_account=_raw(inv).get("offset_gl_account"),
         archived_at=inv.archived_at,
         line_item_count=len(inv.line_items),
         missing_count=len(_missing_fields(inv)),

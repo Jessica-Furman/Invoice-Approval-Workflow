@@ -405,6 +405,81 @@ def approver_for(vendor_name: str | None, invoice_number: str | None) -> str | N
     return None
 
 
+# --- Tracker accounting lookup (documentation/2026_Copy Tracker.xlsx) ----------------------------
+# The copy tracker also records, per filed invoice, its Cost Center (column G) and the Offset GL
+# Account (column F) — the GL to offset, i.e. the CapEx/OpEx code. We route an OTHER invoice by its
+# invoice number to these two values for display. An invoice may span several allocation rows with
+# different values; we return every distinct value (comma-joined, first-seen order).
+_TRACKER_COST_CENTER_COL = "Cost Center"     # column G
+_TRACKER_OFFSET_GL_COL = "Offset GL Account"  # column F (= CapEx/OpEx GL code)
+
+
+def _load_tracker_accounting_index(path: Path) -> dict[str, list[tuple[str, str]]]:
+    """{normalized invoice number -> [(cost center, offset GL account), ...]} from the copy tracker."""
+    index: dict[str, list[tuple[str, str]]] = {}
+    if not path.exists():
+        return index
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return index
+    try:
+        ws = wb[wb.sheetnames[0]]
+        rows = ws.iter_rows(values_only=True)
+        header = next(rows, None)
+        if not header:
+            return index
+        cols = {str(h).strip(): i for i, h in enumerate(header) if h is not None}
+        ii = cols.get("Invoice Number")
+        cci = cols.get(_TRACKER_COST_CENTER_COL)
+        gli = cols.get(_TRACKER_OFFSET_GL_COL)
+        if ii is None:
+            return index
+        for row in rows:
+            if ii >= len(row):
+                continue
+            invno = _norm_invno(row[ii])
+            if not invno:
+                continue
+            def _cell(i: int | None) -> str:
+                return str(row[i]).strip() if i is not None and i < len(row) and row[i] is not None else ""
+            index.setdefault(invno, []).append((_cell(cci), _cell(gli)))
+    finally:
+        wb.close()
+    return index
+
+
+@lru_cache(maxsize=1)
+def _tracker_accounting_index() -> dict[str, list[tuple[str, str]]]:
+    return _load_tracker_accounting_index(COPY_TRACKER_XLSX)
+
+
+def _distinct_join(values: list[str]) -> str | None:
+    """Distinct non-empty values in first-seen order, comma-joined (None if there are none)."""
+    seen: list[str] = []
+    for v in values:
+        if v and v not in seen:
+            seen.append(v)
+    return ", ".join(seen) if seen else None
+
+
+@lru_cache(maxsize=512)
+def tracking_accounting_for(invoice_number: str | None) -> dict[str, str | None]:
+    """Cost center + offset GL account for an invoice, routed by invoice number in the copy tracker.
+
+    Returns {'cost_center', 'offset_gl_account'} with every distinct value across the invoice's
+    allocation rows (comma-joined), or None per field when the tracker has nothing.
+    """
+    invno = _norm_invno(invoice_number)
+    rows = _tracker_accounting_index().get(invno, []) if invno else []
+    return {
+        "cost_center": _distinct_join([cc for cc, _ in rows]),
+        "offset_gl_account": _distinct_join([gl for _, gl in rows]),
+    }
+
+
 # --- Fixed values (documentation/csv_rules) ------------------------------------------------------
 CURRENCY_DEFAULT = "USD"
 UNIT_OF_MEASURE = "EA"  # Unit of Measure* — matches documentation/Coupa sample invoice.xlsx ("EA")

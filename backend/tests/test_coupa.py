@@ -339,6 +339,35 @@ def test_approver_disambiguated_by_vendor_when_number_shared(monkeypatch):
     approver_for.cache_clear()
 
 
+def test_tracking_accounting_lists_distinct_values(monkeypatch):
+    from app.services.coupa import tracking_accounting_for
+
+    tracking_accounting_for.cache_clear()
+    # invoice 18874 splits across two cost centers, one offset GL -> distinct values, first-seen order.
+    monkeypatch.setattr(
+        coupa, "_tracker_accounting_index",
+        lambda: {
+            "18874": [("DT600", "679030"), ("99940", "679030")],
+            "900000255559": [("DT800", "664070")],
+        },
+    )
+    split = tracking_accounting_for("18874")
+    assert split == {"cost_center": "DT600, 99940", "offset_gl_account": "679030"}
+    single = tracking_accounting_for("900000255559")
+    assert single == {"cost_center": "DT800", "offset_gl_account": "664070"}
+    tracking_accounting_for.cache_clear()
+
+
+def test_tracking_accounting_unknown_invoice_is_none(monkeypatch):
+    from app.services.coupa import tracking_accounting_for
+
+    tracking_accounting_for.cache_clear()
+    monkeypatch.setattr(coupa, "_tracker_accounting_index", lambda: {})
+    assert tracking_accounting_for("NOPE") == {"cost_center": None, "offset_gl_account": None}
+    assert tracking_accounting_for(None) == {"cost_center": None, "offset_gl_account": None}
+    tracking_accounting_for.cache_clear()
+
+
 def test_load_supplier_index_normalizes_names(tmp_path):
     p = tmp_path / "suppliers.csv"
     p.write_text(

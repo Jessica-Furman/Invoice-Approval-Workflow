@@ -64,6 +64,17 @@ def test_dashboard_splits_found_and_missing(db: Session):
     assert resp.missing[0].missing_count == 1
 
 
+def test_cost_center_and_offset_gl_surface_from_raw(db: Session):
+    inv = _other(db, number="A6", status=models.STATUS_ALL_DATA_FOUND, supplier="RAC-1", missing=[])
+    inv.raw_extraction = {**inv.raw_extraction, "cost_center": "DT600, 99940", "offset_gl_account": "679030"}
+    db.commit()
+    # Present on both the board summary and the detail payload.
+    summary = next(s for s in other_dashboard(db).all if s.id == inv.id)
+    assert summary.cost_center == "DT600, 99940" and summary.offset_gl_account == "679030"
+    det = other_invoice_detail(inv.id, db)
+    assert det.cost_center == "DT600, 99940" and det.offset_gl_account == "679030"
+
+
 def test_detail_returns_lines_and_missing_fields(db: Session):
     inv = _other(db, number="A3", status=models.STATUS_MISSING_DATA, supplier=None, missing=["supplier number"])
     det = other_invoice_detail(inv.id, db)

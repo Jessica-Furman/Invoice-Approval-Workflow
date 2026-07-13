@@ -48,6 +48,21 @@ export function OtherInvoiceCard({
         {date(invoice.date_received)}
       </div>
 
+      {(invoice.cost_center || invoice.offset_gl_account) && (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+          {invoice.cost_center && (
+            <span>
+              Cost center <span className="font-mono text-slate-200">{invoice.cost_center}</span>
+            </span>
+          )}
+          {invoice.offset_gl_account && (
+            <span>
+              Offset GL <span className="font-mono text-slate-200">{invoice.offset_gl_account}</span>
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between border-t border-slate-700 pt-3">
         <span className="font-mono text-lg font-semibold text-slate-100">
           {money(invoice.total_invoice_cost)}

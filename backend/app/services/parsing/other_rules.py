@@ -109,6 +109,48 @@ def _extract_vendor(text: str) -> str | None:
     return None
 
 
+# Vendor brand from an email domain (e.g. accountsreceivable@cyrusone.com -> "CyrusOne"). Used when
+# the letterhead legal entity is a payment/billing shell (e.g. "C1 Ground Tenant LLC") that isn't a
+# known supplier, but the real brand — printed only in the footer/remit email — is. Bank and generic
+# personal domains are ignored so we never pick the remit bank as the vendor.
+_EMAIL_DOMAIN_RE = re.compile(r"@([A-Za-z0-9-]+)\.[A-Za-z][A-Za-z.]{1,}")
+_NON_VENDOR_DOMAINS = {
+    "gmail", "yahoo", "hotmail", "outlook", "live", "aol", "icloud", "me", "msn", "proton",
+    "pnc", "pncbank", "wellsfargo", "chase", "bankofamerica", "citibank", "citi", "usbank",
+}
+
+
+def _email_domain_vendors(text: str) -> list[str]:
+    """Ordered, de-duped vendor-brand candidates taken from email domains in the invoice text.
+
+    The domain label is cased from an actual text occurrence when possible ('cyrusone' -> 'CyrusOne'),
+    else title-cased. Bank/personal domains and very short labels are skipped.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _EMAIL_DOMAIN_RE.finditer(text):
+        label = m.group(1).lower()
+        if label in _NON_VENDOR_DOMAINS or len(label) < 3 or label in seen:
+            continue
+        seen.add(label)
+        out.append(_cased_occurrence(text, label))
+    return out
+
+
+def _cased_occurrence(text: str, label: str) -> str:
+    """Proper casing for a domain brand: the first standalone (non-email) occurrence in the text
+    ('CyrusOne'), preferring one that carries real casing; else the label title-cased."""
+    fallback: str | None = None
+    for m in re.finditer(r"\b" + re.escape(label) + r"\b", text, re.IGNORECASE):
+        if m.start() > 0 and text[m.start() - 1] == "@":
+            continue  # inside an email address -> lowercase, skip
+        word = m.group(0)
+        if any(c.isupper() for c in word):
+            return word
+        fallback = fallback or word
+    return fallback or label.capitalize()
+
+
 def _extract_date_other(text: str, header_date):
     """Header date, else a dotted date like '05.15.2026' (American MM.DD.YYYY) that parse_date misses."""
     if header_date is not None:
@@ -232,17 +274,32 @@ def _cell(cells: list[str], ci: int | None) -> str:
     return cells[ci] if ci is not None and 0 <= ci < len(cells) else ""
 
 
-def _parse_other_table(table: list[list[str]]) -> list[ParsedOtherLineItem]:
-    # Locate a header row (within the first 6) that has both a description-ish and an amount-ish column.
-    header_idx = None
+def _find_header_row(table: list[list[str]]) -> tuple[int | None, list[str]]:
+    """The first row (within the first 6) that has BOTH a description-ish and an amount-ish column."""
     for i, row in enumerate(table[:6]):
         cells = [_norm_cell(c) for c in row]
         if _match_tier(cells, _DESC_TIERS) is not None and _match_tier(cells, _AMOUNT_TIERS, _AMOUNT_EXCLUDE) is not None:
-            header_idx = i
-            break
+            return i, [_norm_cell(c) for c in table[i]]
+    return None, []
+
+
+def _tier_rank(header: list[str], tiers: list[tuple[str, ...]], exclude: tuple[str, ...] = ()) -> int:
+    """Which tier a header matches (0 = strongest), or len(tiers) if none. Used to rank competing
+    tables so a literal 'Description' column outranks a weaker 'Service Type' match."""
+    low = [h.lower() for h in header]
+    for ti, tier in enumerate(tiers):
+        for h in low:
+            if any(x in h for x in exclude):
+                continue
+            if any(k in h for k in tier):
+                return ti
+    return len(tiers)
+
+
+def _parse_other_table(table: list[list[str]]) -> list[ParsedOtherLineItem]:
+    header_idx, header = _find_header_row(table)
     if header_idx is None:
         return []
-    header = [_norm_cell(c) for c in table[header_idx]]
     ci_desc = _match_tier(header, _DESC_TIERS)
     # A "Product"/"Charge Name" column to prefix the description with (but never a "... Period" column).
     ci_prod = _match_excl(header, ("product", "charge name"), ("period",))
@@ -279,11 +336,20 @@ def _parse_other_table(table: list[list[str]]) -> list[ParsedOtherLineItem]:
 
 
 def _line_items_from_tables(tables: list[list[list[str]]]) -> list[ParsedOtherLineItem]:
+    """Pick the best service table. An invoice can carry supporting *detail* tables (e.g. a per-ticket
+    appendix) with MORE rows than the billing-summary table; ranking by row count alone would wrongly
+    pick the appendix (the CyrusOne 'Smarthands' case). So rank by description-column strength first —
+    a literal 'Description' column beats a weaker 'Service Type' match — then by row count."""
     best: list[ParsedOtherLineItem] = []
+    best_key: tuple[int, int] | None = None
     for t in tables:
         items = _parse_other_table(t)
-        if len(items) > len(best):
-            best = items
+        if not items:
+            continue
+        _, header = _find_header_row(t)
+        key = (_tier_rank(header, _DESC_TIERS), -len(items))
+        if best_key is None or key < best_key:
+            best_key, best = key, items
     return best
 
 
@@ -427,6 +493,16 @@ def parse_other_invoice(pdf_path: str) -> OtherParseResult:
     vendor = _clean_vendor_name(_extract_vendor(text) or header.get("vendor_name"))
     if vendor and _GENERIC_TITLE_RE.match(vendor.strip()):
         vendor = None  # never show a document title ("SERVICE INVOICE") as the vendor
+    # If the letterhead entity isn't a known supplier (e.g. a billing shell like "C1 Ground Tenant
+    # LLC"), prefer an email-domain brand that IS in the supplier list (e.g. "CyrusOne").
+    from app.services.coupa import supplier_number_for
+
+    if not (vendor and supplier_number_for(vendor)):
+        for cand in _email_domain_vendors(text):
+            cand = _clean_vendor_name(cand)
+            if cand and supplier_number_for(cand):
+                vendor = cand
+                break
     parsed = ParsedOtherInvoice(
         vendor_name=vendor,
         invoice_number=header.get("invoice_number") or _invoice_no_from_filename(pdf_path),
