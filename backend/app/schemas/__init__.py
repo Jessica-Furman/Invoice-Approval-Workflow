@@ -202,8 +202,10 @@ class OtherInvoiceSummary(BaseModel):
     total_invoice_cost: float | None = None
     status: str  # all_data_found | missing_data
     supplier_number: str | None = None
-    cost_center: str | None = None        # from the copy tracker (column G), routed by invoice number
-    offset_gl_account: str | None = None  # copy tracker column F — the GL to offset (CapEx/OpEx code)
+    budget_id: str | None = None          # Budget_ID's.xlsx, routed by vendor + service description
+    cost_center: str | None = None        # copy tracker (col G) by invoice #, else budget sheet fallback
+    offset_gl_account: str | None = None  # copy tracker col F (GL to offset / CapEx-OpEx), else budget
+    approver: str | None = None           # copy tracker by invoice #, else budget sheet fallback
     archived_at: datetime | None = None
     line_item_count: int = 0
     missing_count: int = 0

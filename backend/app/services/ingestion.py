@@ -154,7 +154,8 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
     Line items reuse the shared columns as storage: `contractor_name`=service description,
     `hours`=quantity, `rate`=unit price, `amount`=amount.
     """
-    from app.services.coupa import supplier_number_for, tracking_accounting_for
+    from app.services.budget_index import budget_route
+    from app.services.coupa import approver_for, supplier_number_for, tracking_accounting_for
     from app.services.parsing.other_rules import parse_other_invoice, required_missing_fields
 
     storage = storage or LocalStorage(settings.STORAGE_DIR)
@@ -162,9 +163,19 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
     p = result.parsed
 
     storage_key = storage.put_file(pdf_path)
-    supplier_number = supplier_number_for(p.vendor_name)
-    # Cost center + offset GL account (CapEx/OpEx code), routed by invoice number in the copy tracker.
-    accounting = tracking_accounting_for(p.invoice_number)
+    # Accounting routing for "other" invoices:
+    #  - Copy Tracker (by invoice number): cost center + offset GL + approver, if this invoice was filed.
+    #  - Budget sheet (vendor + service description): Budget ID, plus a fallback for anything the tracker
+    #    lacked (cost center / offset GL / approver / supplier number).
+    tracker = tracking_accounting_for(p.invoice_number)
+    budget = budget_route(p.vendor_name, [li.description or "" for li in p.line_items])
+    supplier_number = supplier_number_for(p.vendor_name) or budget["supplier_number"]
+    accounting = {
+        "budget_id": budget["budget_id"],
+        "cost_center": tracker["cost_center"] or budget["cost_center"],
+        "offset_gl_account": tracker["offset_gl_account"] or budget["offset_gl_account"],
+        "approver": approver_for(p.vendor_name, p.invoice_number) or budget["approver"],
+    }
     missing = required_missing_fields(p, supplier_number)
     status = models.STATUS_MISSING_DATA if missing else models.STATUS_ALL_DATA_FOUND
 
@@ -200,8 +211,10 @@ def ingest_other_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = 
     inv.raw_extraction = {
         "method": result.method,
         "supplier_number": supplier_number,
+        "budget_id": accounting["budget_id"],
         "cost_center": accounting["cost_center"],
         "offset_gl_account": accounting["offset_gl_account"],
+        "approver": accounting["approver"],
         "missing_fields": missing,
         "parsed": p.model_dump(mode="json"),
         "warnings": result.warnings,

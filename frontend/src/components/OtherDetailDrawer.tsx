@@ -99,6 +99,8 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
               <Field label="Line Items" value={data.line_item_count} />
               <Field label="Cost Center" value={data.cost_center ?? "—"} mono />
               <Field label="Offset GL Account" value={data.offset_gl_account ?? "—"} mono />
+              <Field label="Budget ID" value={data.budget_id ?? "—"} mono />
+              <Field label="Approver" value={data.approver ?? "—"} />
             </div>
 
             {/* Missing-data banner */}

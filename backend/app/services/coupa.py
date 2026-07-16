@@ -229,6 +229,7 @@ def _normalize_supplier_name(name: str | None) -> str:
     s = re.sub(r"\s*\([^)]*\)\s*$", "", name or "")  # trailing "(zip/code)"
     s = re.sub(r"-\d+\s*$", "", s)                    # trailing "-<supplier digits>"
     s = re.sub(r"[^a-z0-9]+", " ", s.lower())
+    s = re.sub(r"\bcom\b", " ", s)                    # drop a ".com" domain token ("salesforce com inc")
     return re.sub(r"\s+", " ", s).strip()
 
 

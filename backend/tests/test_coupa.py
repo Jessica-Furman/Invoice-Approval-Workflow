@@ -368,6 +368,17 @@ def test_tracking_accounting_unknown_invoice_is_none(monkeypatch):
     tracking_accounting_for.cache_clear()
 
 
+def test_normalize_supplier_strips_dotcom_but_not_inword_com():
+    from app.services.coupa import _normalize_supplier_name
+
+    # "SALESFORCE.COM INC" and an invoice's "Salesforce, Inc" must normalize to the same key.
+    assert _normalize_supplier_name("SALESFORCE.COM INC-250849 (75320)") == "salesforce inc"
+    assert _normalize_supplier_name("Salesforce, Inc") == "salesforce inc"
+    # A standalone "com" is dropped, but "com" inside a word is preserved.
+    assert _normalize_supplier_name("COMCAST") == "comcast"
+    assert _normalize_supplier_name("COMMSCOPE INC") == "commscope inc"
+
+
 def test_load_supplier_index_normalizes_names(tmp_path):
     p = tmp_path / "suppliers.csv"
     p.write_text(

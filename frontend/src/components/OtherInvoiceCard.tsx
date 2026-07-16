@@ -48,8 +48,13 @@ export function OtherInvoiceCard({
         {date(invoice.date_received)}
       </div>
 
-      {(invoice.cost_center || invoice.offset_gl_account) && (
+      {(invoice.budget_id || invoice.cost_center || invoice.offset_gl_account) && (
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+          {invoice.budget_id && (
+            <span>
+              Budget <span className="font-mono text-slate-200">{invoice.budget_id}</span>
+            </span>
+          )}
           {invoice.cost_center && (
             <span>
               Cost center <span className="font-mono text-slate-200">{invoice.cost_center}</span>

@@ -11,11 +11,14 @@ import pytest
 
 from app.schemas import ParsedOtherInvoice, ParsedOtherLineItem
 from app.services.parsing.other_rules import (
+    _choose_line_items,
     _email_domain_vendors,
     _extract_total,
     _line_items_from_tables,
     _line_items_from_text,
+    _line_items_from_words,
     _parse_other_table,
+    _segment_row,
     parse_other_invoice,
     required_missing_fields,
 )
@@ -179,6 +182,77 @@ def test_cyrusone_uses_brand_not_billing_shell():
     assert r.parsed.vendor_name == "CyrusOne"
     assert "C1 Ground Tenant" not in (r.parsed.vendor_name or "")
     assert supplier_number_for(r.parsed.vendor_name) is not None
+
+
+# --- word-position tier (generic multi-column reconstruction, e.g. Salesforce) ----------------
+def _w(text: str, x0: float, top: float, cw: float = 6.0) -> dict:
+    return {"text": text, "x0": x0, "x1": x0 + len(text) * cw, "top": top}
+
+
+def _row(tokens: list[tuple[str, float]], top: float) -> list[dict]:
+    return [_w(t, x0, top) for t, x0 in tokens]
+
+
+def test_segment_row_splits_columns_not_words():
+    # "Additional Orders - B2B" (small spaces) stays one cell; the wide gap before the number splits.
+    words = _row([("Additional", 40), ("Orders", 105), ("-", 150), ("B2B", 160), ("203,742.00", 300)], top=10)
+    cells = _segment_row(words)
+    assert cells == ["Additional Orders - B2B", "203,742.00"]
+
+
+def test_words_tier_reconstructs_salesforce_like_columns():
+    # Header: Service | Quote # | Months | Qty | Unit Price | Tax Rate | Tax | Total (8 columns).
+    header = _row([("Service", 40), ("Quote", 280), ("#", 318), ("Months", 400), ("Qty", 480),
+                   ("Unit", 560), ("Price", 590), ("Tax", 660), ("Rate", 690), ("Tax", 760), ("Total", 840)], top=10)
+    row1 = _row([("1", 40), ("Additional", 52), ("Orders", 120), ("-", 165), ("B2B", 175),
+                 ("Q-08781791", 280), ("12.00", 400), ("38,500", 480), ("0.44", 560), ("0%", 660),
+                 ("0.00", 760), ("203,742.00", 840)], top=30)
+    wrap = _row([("Commerce", 52), ("-", 108), ("LP", 120)], top=45)
+    row2 = _row([("2", 40), ("B2B", 52), ("Commerce", 76), ("Platform", 130),
+                 ("Q-08781791", 280), ("12.00", 400), ("1", 480), ("3,600.00", 560), ("0%", 660),
+                 ("0.00", 760), ("43,200.00", 840)], top=60)
+    items = _line_items_from_words([header + row1 + wrap + row2])
+    assert len(items) == 2
+    assert items[0].amount == 203742.0 and items[0].quantity == 38500.0 and items[0].unit_price == 0.44
+    assert "Additional Orders - B2B" in items[0].description
+    assert "Commerce" in items[0].description  # the wrapped line was appended
+    assert items[1].amount == 43200.0 and items[1].quantity == 1.0
+
+
+def test_choose_line_items_prefers_sum_closest_to_total():
+    from app.schemas import ParsedOtherLineItem as LI
+
+    collapsed = [LI(description="one big row", amount=203742.0)]          # a collapsed table
+    full = [LI(description="a", amount=203742.0), LI(description="b", amount=43200.0)]  # the word tier
+    items, label = _choose_line_items([("rules", collapsed), ("words", full)], total=246942.0)
+    assert label == "words" and len(items) == 2
+
+
+def test_choose_line_items_splits_collapsed_blob_on_equal_sum():
+    from app.schemas import ParsedOtherLineItem as LI
+
+    blob = [LI(description="x y", amount=100.0)]                          # a collapsed single row
+    split = [LI(description="x", amount=60.0), LI(description="y", amount=40.0)]
+    # Both sum to the total (100); prefer the set that splits the blob into its real rows.
+    items, label = _choose_line_items([("rules", blob), ("words", split)], total=100.0)
+    assert label == "words" and len(items) == 2
+
+
+_SALESFORCE_PDF = (
+    Path(__file__).resolve().parents[2] / "data" / "storage" / "AMER_Invoice_38201424_21-06-2026_001011.pdf"
+)
+
+
+@pytest.mark.skipif(not _SALESFORCE_PDF.exists(), reason="Salesforce sample not present")
+def test_salesforce_parses_clean_line_items_end_to_end():
+    r = parse_other_invoice(str(_SALESFORCE_PDF))
+    p = r.parsed
+    assert p.vendor_name and "salesforce" in p.vendor_name.lower()
+    assert p.total_invoice_cost == 246942.0
+    # The generic word tier recovers real service lines (not the collapsed "1 Additional Orders..." blob).
+    assert len(p.line_items) >= 2
+    assert any((li.quantity or 0) > 0 for li in p.line_items)          # quantity parsed (was 0 before)
+    assert abs(sum(li.amount or 0 for li in p.line_items) - 246942.0) < 1.0  # lines sum to the total
 
 
 # --- sample PDFs --------------------------------------------------------------------------------

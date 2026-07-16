@@ -235,8 +235,10 @@ export interface OtherInvoiceSummary {
   total_invoice_cost: number | null;
   status: OtherStatus;
   supplier_number: string | null;
+  budget_id: string | null;
   cost_center: string | null;
   offset_gl_account: string | null;
+  approver: string | null;
   archived_at: string | null;
   line_item_count: number;
   missing_count: number;

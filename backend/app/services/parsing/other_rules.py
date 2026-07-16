@@ -353,6 +353,161 @@ def _line_items_from_tables(tables: list[list[list[str]]]) -> list[ParsedOtherLi
     return best
 
 
+# --- word-position tier (generic column reconstruction) --------------------------------------
+# Vendor-agnostic fallback: when a table collapses (pdfplumber merges the row into one cell) or a row
+# has many numeric columns the text tier can't split (Salesforce: Service|Quote#|Months|Qty|Unit
+# Price|Tax Rate|Tax|Total), rebuild columns from the words' x-coordinates. The header row's words
+# define the columns; each body word is assigned to the nearest column by x-center. No per-vendor
+# rules — it reads whatever columns the invoice prints.
+_LEADING_LINENO_RE = re.compile(r"^\s*\d{1,3}\s+(?=[A-Za-z])")  # a leading line number: "1 Additional …"
+# The true end of the line-items region (a grand-total/remaining-balance line). NOT a plain "Total",
+# since some invoices (Salesforce) print a per-line "Tax Breakdown" between items.
+_WORD_SECTION_END_RE = re.compile(
+    r"^(invoice\s+total|grand\s+total|balance\s+due|amount\s+due|total\s+due|subtotal|sub\s*-?\s*total)\b",
+    re.IGNORECASE,
+)
+
+
+def _group_words_into_lines(words: list[dict], y_tol: float = 3.0) -> list[list[dict]]:
+    """Group extracted words into visual rows by their vertical position, each row sorted left→right."""
+    lines: list[dict] = []
+    cur: dict | None = None
+    for w in sorted(words, key=lambda w: (round(w["top"], 1), w["x0"])):
+        if cur is None or abs(w["top"] - cur["top"]) > y_tol:
+            cur = {"top": w["top"], "words": [w]}
+            lines.append(cur)
+        else:
+            cur["words"].append(w)
+    for ln in lines:
+        ln["words"].sort(key=lambda w: w["x0"])
+    return [ln["words"] for ln in lines]
+
+
+def _segment_row(words: list[dict], min_gap: float = 9.0) -> list[str]:
+    """Split a visual row into column cells at large horizontal gaps. Adapts per-row (column gaps are
+    much wider than the spaces between words in a cell), so it handles both left-aligned text and
+    right-aligned numbers without needing fixed column boundaries."""
+    if not words:
+        return []
+    gaps = sorted(words[i + 1]["x0"] - words[i]["x1"] for i in range(len(words) - 1))
+    # Threshold between intra-cell spaces (small) and column gaps (large): anchor on a low-percentile
+    # gap (a within-cell space) times a factor, so column gaps clear it even when a row is mostly gaps.
+    thr = max(min_gap, gaps[len(gaps) // 4] * 2.5) if gaps else min_gap
+    cells = [words[0]["text"]]
+    for i in range(1, len(words)):
+        if words[i]["x0"] - words[i - 1]["x1"] > thr:
+            cells.append(words[i]["text"])
+        else:
+            cells[-1] += " " + words[i]["text"]
+    return [c.strip() for c in cells]
+
+
+def _line_items_from_words(pages_words: list[list[dict]]) -> list[ParsedOtherLineItem]:
+    """Reconstruct line items from word positions. Finds the columnar header once, maps its cells to
+    roles (desc / qty / unit price / amount), then segments each body row the same way. Rows whose cell
+    count matches the header map straight across; otherwise we anchor on the first cell (description)
+    and the last money cell (amount)."""
+    labels: list[str] | None = None
+    di = ai = qi = pi = None
+    items: list[ParsedOtherLineItem] = []
+    pending: str | None = None
+    last: ParsedOtherLineItem | None = None
+
+    for words in pages_words:
+        if not words:
+            continue
+        lines = _group_words_into_lines(words)
+        start = 0
+        if labels is None:  # locate the columnar header (first page that has one)
+            for i, ln in enumerate(lines):
+                text = " ".join(w["text"] for w in ln)
+                if len(ln) >= 3 and _SECTION_HEADER_RE.search(text) and not _MONEY_RE.search(text):
+                    labels = _segment_row(ln)
+                    di = _match_tier(labels, _DESC_TIERS)
+                    ai = _match_tier(labels, _AMOUNT_TIERS, _AMOUNT_EXCLUDE)
+                    qi = _match_any(labels, _QTY_KEYS)
+                    pi = _match_tier(labels, _PRICE_TIERS, ("unit of measure",))
+                    start = i + 1
+                    break
+            if labels is None or di is None or ai is None:
+                labels = None
+                continue
+
+        for ln in lines[start:]:
+            text = " ".join(w["text"] for w in ln).strip()
+            if not text:
+                continue
+            if _WORD_SECTION_END_RE.match(text):
+                return items  # reached the totals section
+            if _SECTION_HEADER_RE.search(text) and not _MONEY_RE.search(text):
+                continue  # a repeated header on a later page
+            cells = _segment_row(ln)
+            # A leading line number ("1", "2", …) often segments as its own cell, making the row one
+            # cell wider than the header; drop it so the remaining cells align to the columns.
+            if len(cells) == len(labels) + 1 and re.fullmatch(r"\d{1,3}", cells[0]):
+                cells = cells[1:]
+
+            if len(cells) == len(labels):
+                amount_raw = cells[ai]
+                desc_raw = cells[di]
+                qty_raw = cells[qi] if qi is not None else ""
+                price_raw = cells[pi] if pi is not None else ""
+            else:  # misaligned row: anchor on first cell + last money cell
+                money = [c for c in cells if _MONEY_CELL_RE.match(c)]
+                amount_raw = money[-1] if money else ""
+                desc_raw = cells[0] if cells else ""
+                qty_raw = price_raw = ""
+
+            amount = clean_number(amount_raw) if _MONEY_CELL_RE.match(amount_raw) else None
+            desc = _LEADING_LINENO_RE.sub("", desc_raw).strip()
+            is_footer = bool(_FOOTER_RE.search(text))
+
+            if amount is None:
+                # A description that wrapped onto its own line (no money, alpha only, no stray digits).
+                if desc and re.search(r"[A-Za-z]", desc) and not is_footer and not re.search(r"\d", text):
+                    if last is not None and pending is None:
+                        last.description = re.sub(r"\s+", " ", f"{last.description} {desc}").strip()
+                    else:
+                        pending = f"{pending} {desc}".strip() if pending else desc
+                continue
+            if is_footer or not re.search(r"[A-Za-z]", desc):
+                continue
+            full = f"{pending} {desc}".strip() if pending else desc
+            pending = None
+            last = ParsedOtherLineItem(
+                description=re.sub(r"\s+", " ", full).strip(),
+                quantity=clean_number(qty_raw),
+                unit_price=clean_number(price_raw),
+                amount=amount,
+            )
+            items.append(last)
+    return items
+
+
+def _sum_amounts(items: list[ParsedOtherLineItem]) -> float:
+    return round(sum(li.amount or 0.0 for li in items), 2)
+
+
+def _choose_line_items(
+    candidates: list[tuple[str, list[ParsedOtherLineItem]]], total: float | None
+) -> tuple[list[ParsedOtherLineItem], str]:
+    """Pick the best line-item set. When the invoice total is known, prefer the set whose amounts sum
+    closest to it (this is how the generic word tier wins over a collapsed table on Salesforce). On an
+    equal sum, prefer MORE line items — a set that splits a collapsed blob into its real rows is more
+    useful and, summing identically, no less accurate. With no total, most line items wins."""
+    best_items: list[ParsedOtherLineItem] = []
+    best_label = "rules"
+    best_key: tuple[float, int] | None = None
+    for label, items in candidates:
+        if not items:
+            continue
+        close = abs(_sum_amounts(items) - total) if total else 0.0
+        key = (round(close, 2), -len(items))
+        if best_key is None or key < best_key:
+            best_key, best_items, best_label = key, items, label
+    return best_items, best_label
+
+
 # --- text tier -------------------------------------------------------------------------------
 # A trailing "<qty>? <unit price>? <amount>" run at the end of a columnar text row (Texas Shred,
 # Bridgepointe, ClearSky, Maven). qty may be a bare/3-decimal number; price & amount are money.
@@ -455,6 +610,7 @@ def parse_other_invoice(pdf_path: str) -> OtherParseResult:
     warnings: list[str] = []
     text_parts: list[str] = []
     tables: list[list[list[str]]] = []
+    pages_words: list[list[dict]] = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             text_parts.append(page.extract_text() or "")
@@ -462,6 +618,11 @@ def parse_other_invoice(pdf_path: str) -> OtherParseResult:
                 tables.extend(page.extract_tables() or [])
             except Exception as e:  # pragma: no cover - pdfplumber edge cases
                 warnings.append(f"Table extraction error: {e}")
+            try:
+                pages_words.append(page.extract_words() or [])
+            except Exception as e:  # pragma: no cover - pdfplumber edge cases
+                pages_words.append([])
+                warnings.append(f"Word extraction error: {e}")
     text = "\n".join(text_parts).strip()
     has_text = bool(text)
     method = "rules"
@@ -477,15 +638,23 @@ def parse_other_invoice(pdf_path: str) -> OtherParseResult:
             warnings.append("Scanned PDF and OCR unavailable.")
 
     header = extract_header(text)
-    line_items = _line_items_from_tables(tables) if tables else []
-    if not line_items:
-        line_items = _line_items_from_text(text)
-        if line_items and has_text:
-            method = "text"
-
+    # The invoice total is resolved first (independent of line items) so it can arbitrate between the
+    # parsing tiers — the set whose amounts sum closest to it wins.
     total = _extract_total(text)
     if total is None:
         total = header.get("total_invoice_cost")
+
+    # Three vendor-agnostic tiers; the trusted table tier is listed first so it wins exact ties.
+    candidates: list[tuple[str, list[ParsedOtherLineItem]]] = []
+    if tables:
+        candidates.append(("rules", _line_items_from_tables(tables)))
+    candidates.append(("text", _line_items_from_text(text)))
+    if pages_words and has_text:  # word positions only exist for real text PDFs (not OCR output)
+        candidates.append(("words", _line_items_from_words(pages_words)))
+    line_items, chosen = _choose_line_items(candidates, total)
+    if line_items and has_text:
+        method = chosen
+
     if total is None and line_items:  # last resort: sum the line amounts
         s = sum((li.amount or 0.0) for li in line_items)
         total = round(s, 2) if s else None
