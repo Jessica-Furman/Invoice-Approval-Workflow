@@ -24,6 +24,8 @@ export interface InvoiceSummary {
   archived_at: string | null;
   line_item_count: number;
   matched_line_count: number;
+  /** "rules" | "ocr" | "template" (auto-learned) | "llm" | "rules+llm" */
+  parse_method: string | null;
 }
 
 export interface MismatchReason {
@@ -93,8 +95,12 @@ export function invoiceExcelUrl(id: number): string {
 
 /** POST an endpoint that returns a file blob and trigger a browser download, honoring the
  *  server's Content-Disposition filename (exposed via CORS) with a fallback. */
-async function downloadFromPost(url: string, fallbackName: string): Promise<void> {
-  const res = await api.post(url, null, { responseType: "blob" });
+async function downloadFromPost(
+  url: string,
+  fallbackName: string,
+  body: unknown = null,
+): Promise<void> {
+  const res = await api.post(url, body, { responseType: "blob" });
   const disposition = String(res.headers["content-disposition"] ?? "");
   const match = disposition.match(/filename="?([^"]+)"?/);
   const filename = match?.[1] ?? fallbackName;
@@ -124,6 +130,65 @@ export function generateCoupaDraftCsv(id: number): Promise<void> {
  *  (they clear from the board but stay in the DB / History). Powers the "Export All" slider. */
 export function bulkExportMatched(): Promise<void> {
   return downloadFromPost(`/api/invoices/bulk-export-matched`, `coupa_export.zip`);
+}
+
+// --- Executive report ("Create Report") -------------------------------------------------------
+// The LLM narrative runs ONLY when these are called — never in the background.
+export interface ReportRequest {
+  start_date?: string | null; // YYYY-MM-DD
+  end_date?: string | null;
+}
+
+export interface ReportVendor {
+  vendor: string;
+  spend: number;
+  invoice_count: number;
+  type: string;
+}
+
+export interface ReportMonth {
+  month: string; // YYYY-MM
+  contractor_spend: number;
+  other_spend: number;
+  invoice_count: number;
+}
+
+export interface ReportAggregates {
+  period: { start: string | null; end: string | null; generated_from_invoices: number };
+  totals: {
+    combined_spend: number;
+    contractor_spend: number;
+    other_spend: number;
+    invoice_count: number;
+    contractor_invoice_count: number;
+    other_invoice_count: number;
+    status_counts: Record<string, number>;
+    parse_method_counts: Record<string, number>;
+    avg_parse_confidence: number | null;
+  };
+  capex_opex: { amounts: Record<string, number>; pct: Record<string, number> };
+  by_company: Record<string, { spend: number; company_code: string | null; cost_center: string | null }>;
+  by_cost_center: Record<string, number>;
+  by_vendor: ReportVendor[];
+  monthly_trend: ReportMonth[];
+}
+
+export interface ReportResponse {
+  aggregates: ReportAggregates;
+  narrative: string | null;
+  llm_available: boolean;
+  generated_at: string;
+}
+
+/** Aggregate every processed invoice and (if a key is configured) write the AI executive narrative. */
+export async function generateReport(body: ReportRequest): Promise<ReportResponse> {
+  const { data } = await api.post<ReportResponse>("/api/reports", body);
+  return data;
+}
+
+/** Download the same report as a self-contained standalone HTML file (opens offline, emailable). */
+export function downloadReportHtml(body: ReportRequest): Promise<void> {
+  return downloadFromPost("/api/reports/html", "invoice-report.html", body);
 }
 
 /** Every invoice ever (active + archived), for the History tab. Deleted invoices are excluded. */

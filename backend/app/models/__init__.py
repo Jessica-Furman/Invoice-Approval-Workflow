@@ -183,6 +183,33 @@ class ProjectManagerCrossref(Base):
     manager_email: Mapped[str | None] = mapped_column(String(255))
 
 
+class VendorParseTemplate(Base):
+    """Learned per-vendor parse template — the LLM's one-and-done output.
+
+    When the LLM parses an invoice no rules could handle, it also emits a declarative template
+    (header regexes + line-item strategy, see services/parsing/templates.py). The template is
+    validated against the source PDF and stored here; future invoices matching `fingerprint_regex`
+    are then parsed by pure Python with no LLM call."""
+
+    __tablename__ = "vendor_parse_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    vendor_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    vendor_name: Mapped[str | None] = mapped_column(String(255))
+    # Case-insensitive content regex matched against a PDF's extracted text to select this template.
+    fingerprint_regex: Mapped[str] = mapped_column(String(512))
+    template: Mapped[dict] = mapped_column(JSON)
+    llm_model: Mapped[str | None] = mapped_column(String(64))
+    source_invoice_id: Mapped[int | None] = mapped_column(ForeignKey("invoices.id"), nullable=True)
+    validated: Mapped[bool] = mapped_column(Boolean, default=False)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class AuditLog(Base):
     """Append-only processing history (User Story 25)."""
 
@@ -202,6 +229,7 @@ __all__ = [
     "ClarityProject",
     "NameCrossref",
     "ProjectManagerCrossref",
+    "VendorParseTemplate",
     "AuditLog",
     "STATUS_MATCHED",
     "STATUS_FLAGGED",

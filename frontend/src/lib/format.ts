@@ -25,3 +25,18 @@ export const statusChip: Record<Status, string> = {
   needs_manual_review: "bg-amber-100 text-amber-700",
   processing_failed: "bg-slate-200 text-slate-700",
 };
+
+/** Badge for how the invoice was parsed. Only AI-involved methods get a badge —
+ *  plain rules/OCR parsing is the norm and stays unlabeled. */
+export function parseMethodBadge(
+  method: string | null | undefined,
+): { label: string; cls: string } | null {
+  if (!method) return null;
+  if (method.includes("llm")) {
+    return { label: "AI-PARSED", cls: "bg-violet-100 text-violet-700" };
+  }
+  if (method === "template") {
+    return { label: "AUTO-LEARNED", cls: "bg-sky-100 text-sky-700" };
+  }
+  return null;
+}

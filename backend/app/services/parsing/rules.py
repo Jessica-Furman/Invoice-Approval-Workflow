@@ -28,6 +28,7 @@ class RulesResult:
     warnings: list[str] = field(default_factory=list)
     text: str = ""
     has_text: bool = True
+    tables: list = field(default_factory=list)  # raw pdfplumber tables (for learned templates)
 
 
 # --- number / date helpers -------------------------------------------------
@@ -1142,7 +1143,7 @@ def parse_with_rules(pdf_path: str) -> RulesResult:
         parsed.hours_worked = items[0].hours
 
     confidence = _score(parsed, warnings)
-    return RulesResult(parsed, confidence=confidence, warnings=warnings, text=text, has_text=True)
+    return RulesResult(parsed, confidence=confidence, warnings=warnings, text=text, has_text=True, tables=tables)
 
 
 def _score(p: ParsedInvoice, warnings: list[str]) -> float:

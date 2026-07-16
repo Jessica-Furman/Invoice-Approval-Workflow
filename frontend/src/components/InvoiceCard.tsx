@@ -1,6 +1,6 @@
 import { ArrowRight, Calendar, Check, Eye } from "lucide-react";
 import type { InvoiceSummary } from "../api/client";
-import { date, money, statusChip, statusLabel } from "../lib/format";
+import { date, money, parseMethodBadge, statusChip, statusLabel } from "../lib/format";
 
 const actionIcon: Record<string, JSX.Element> = {
   matched: <Check className="h-4 w-4 text-emerald-600" />,
@@ -33,10 +33,22 @@ export function InvoiceCard({
         <span className="text-xs font-medium text-slate-400">
           #{invoice.invoice_number ?? invoice.id}
         </span>
-        <span
-          className={`rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${statusChip[invoice.status]}`}
-        >
-          {statusLabel[invoice.status]}
+        <span className="flex items-center gap-1">
+          {(() => {
+            const badge = parseMethodBadge(invoice.parse_method);
+            return badge ? (
+              <span
+                className={`rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${badge.cls}`}
+              >
+                {badge.label}
+              </span>
+            ) : null;
+          })()}
+          <span
+            className={`rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${statusChip[invoice.status]}`}
+          >
+            {statusLabel[invoice.status]}
+          </span>
         </span>
       </div>
 

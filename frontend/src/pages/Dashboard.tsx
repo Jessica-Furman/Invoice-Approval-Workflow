@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { FileBarChart, Loader2, Plus } from "lucide-react";
 import {
   bulkExportMatched,
   fetchDashboard,
@@ -12,6 +12,12 @@ import { ClarityBar } from "../components/ClarityBar";
 import { Column } from "../components/Column";
 import { DetailDrawer } from "../components/DetailDrawer";
 import { SlideToExport } from "../components/SlideToExport";
+
+// Lazy so the charting library is fetched only when someone opens the report, keeping it out of
+// the main dashboard bundle.
+const ReportModal = lazy(() =>
+  import("../components/ReportModal").then((m) => ({ default: m.ReportModal })),
+);
 
 export type View = "dashboard" | "flagged" | "matched" | "all" | "history";
 
@@ -58,6 +64,7 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
   const q = search.trim().toLowerCase();
   const [selected, setSelected] = useState<number | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -111,19 +118,34 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
           className="hidden"
           onChange={onFilesChosen}
         />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={upload.isPending}
-          className="flex items-center gap-2 rounded-lg bg-brand-lime px-5 py-2.5 text-sm font-bold text-brand-inkdark shadow-[0_4px_14px_rgba(164,214,30,0.45)] transition hover:bg-brand-limeglow hover:shadow-[0_4px_20px_rgba(164,214,30,0.6)] disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {upload.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Plus className="h-4 w-4" />
-          )}
-          {upload.isPending ? "Working…" : "Upload Invoice"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setReportOpen(true)}
+            className="flex items-center gap-2 rounded-lg border border-brand-lime bg-white px-4 py-2.5 text-sm font-bold text-brand-inkdark transition hover:bg-lime-50"
+          >
+            <FileBarChart className="h-4 w-4" />
+            Create Report
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={upload.isPending}
+            className="flex items-center gap-2 rounded-lg bg-brand-lime px-5 py-2.5 text-sm font-bold text-brand-inkdark shadow-[0_4px_14px_rgba(164,214,30,0.45)] transition hover:bg-brand-limeglow hover:shadow-[0_4px_20px_rgba(164,214,30,0.6)] disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {upload.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            {upload.isPending ? "Working…" : "Upload Invoice"}
+          </button>
+        </div>
       </div>
+
+      {reportOpen && (
+        <Suspense fallback={null}>
+          <ReportModal onClose={() => setReportOpen(false)} />
+        </Suspense>
+      )}
 
       {upload.isPending && <ProcessingIndicator />}
 

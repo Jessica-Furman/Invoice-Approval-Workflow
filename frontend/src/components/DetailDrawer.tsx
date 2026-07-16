@@ -24,7 +24,7 @@ import {
   type InvoiceDetail as InvoiceDetailT,
   type LineItem,
 } from "../api/client";
-import { date, money, statusChip, statusLabel } from "../lib/format";
+import { date, money, parseMethodBadge, statusChip, statusLabel } from "../lib/format";
 
 function sum(nums: (number | null | undefined)[]): number {
   return nums.reduce((acc: number, n) => acc + (n ?? 0), 0);
@@ -358,6 +358,17 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                 {data.invoice_number} — {date(data.date_received)}
               </button>
               <div className="flex items-center gap-3">
+                {(() => {
+                  const badge = parseMethodBadge(data.parse_method);
+                  return badge ? (
+                    <span
+                      className={`rounded px-2 py-1 text-xs font-semibold ${badge.cls}`}
+                      title="How this invoice was parsed"
+                    >
+                      {badge.label}
+                    </span>
+                  ) : null;
+                })()}
                 <span className={`rounded px-2 py-1 text-xs font-semibold ${statusChip[data.status]}`}>
                   {statusLabel[data.status]}
                 </span>
@@ -376,6 +387,14 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
               <span>
                 Match: {data.matched_line_count}/{data.line_item_count}
               </span>
+              {data.parse_confidence != null && (
+                <span>
+                  Parse confidence:{" "}
+                  <span className="font-medium text-slate-800">
+                    {(data.parse_confidence * 100).toFixed(0)}%
+                  </span>
+                </span>
+              )}
               {data.routed_to && (
                 <span>
                   Routed to: <span className="font-medium capitalize text-slate-800">{data.routed_to}</span> inbox

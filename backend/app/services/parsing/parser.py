@@ -1,10 +1,20 @@
-"""Hybrid parse orchestrator: rules first, Claude fallback when needed and available."""
+"""Hybrid parse orchestrator: rules first, then learned vendor templates, then Claude fallback.
+
+Order per invoice: generic rules (free) -> stored vendor template (free, learned from a previous
+LLM parse) -> LLM (only for genuinely new/unparseable layouts). When the LLM does run, its single
+call also emits a template that is validated against the same PDF and — via ingestion — stored so
+the next invoice from that vendor never needs the LLM again.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from app.schemas import ParsedInvoice
 from app.services.parsing import llm, ocr, rules
+
+if TYPE_CHECKING:  # avoid importing SQLAlchemy at module scope for pure-parsing callers
+    from sqlalchemy.orm import Session
 
 # Below this rules-confidence, try the LLM (if a key is configured).
 CONFIDENCE_THRESHOLD = 0.8
@@ -15,9 +25,15 @@ REQUIRED_FIELDS = ("vendor_name", "invoice_number", "date_received", "total_invo
 class ParseOutcome:
     parsed: ParsedInvoice
     confidence: float
-    method: str  # "rules" | "llm" | "rules+llm"
+    method: str  # "rules" | "ocr" | "template" | "llm" | "rules+llm"
     has_text: bool
     warnings: list[str] = field(default_factory=list)
+    # Set when a stored vendor template parsed this invoice.
+    template_id: int | None = None
+    # Set when the LLM ran and its emitted template validated — ingestion persists it.
+    learned_template: dict | None = None
+    # CAPEX/OPEX / company code / cost center hints the LLM read off the invoice (advisory only).
+    llm_accounting: dict | None = None
 
     def missing_required(self) -> list[str]:
         return [f for f in REQUIRED_FIELDS if not getattr(self.parsed, f)]
@@ -54,7 +70,33 @@ def _merge(base: ParsedInvoice, fallback: ParsedInvoice) -> ParsedInvoice:
     return merged
 
 
-def parse_invoice(pdf_path: str, *, allow_llm: bool = True) -> ParseOutcome:
+def _try_stored_template(db: "Session", r: rules.RulesResult, warnings: list[str]) -> tuple[rules.RulesResult, int | None]:
+    """Apply a stored vendor template when the rules result isn't good enough.
+
+    Returns the (possibly improved) RulesResult and the template id when the template alone made
+    the result pass the gate. Any template failure is swallowed — worst case we fall to the LLM.
+    """
+    from app.services.parsing import templates
+
+    try:
+        hit = templates.find_template(db, r.text)
+        if hit is None:
+            return r, None
+        t_parsed = templates.apply_template(hit.template, r.text, r.tables)
+        merged = _merge(r.parsed, t_parsed)
+        cand = rules.RulesResult(
+            merged, rules._score(merged, warnings), warnings, r.text, r.has_text, r.tables
+        )
+        if not _needs_llm(cand):
+            templates.mark_used(db, hit)
+            return cand, hit.id
+        return cand if cand.confidence > r.confidence else r, None
+    except Exception as e:  # a bad template must never break ingestion
+        warnings.append(f"Stored template failed: {e}")
+        return r, None
+
+
+def parse_invoice(pdf_path: str, *, allow_llm: bool = True, db: "Session | None" = None) -> ParseOutcome:
     r = rules.parse_with_rules(pdf_path)
     warnings = list(r.warnings)
 
@@ -81,22 +123,51 @@ def parse_invoice(pdf_path: str, *, allow_llm: bool = True) -> ParseOutcome:
         except Exception as e:
             warnings.append(f"OCR failed: {e}")
 
+    # Learned vendor templates: free (pure regex), tried only when rules alone weren't enough.
+    # Templates target the text layer, so scanned PDFs (no text) skip straight to the LLM.
+    if _needs_llm(r) and db is not None and r.has_text:
+        r, template_id = _try_stored_template(db, r, warnings)
+        if template_id is not None:
+            return ParseOutcome(
+                r.parsed, r.confidence, "template", True, warnings, template_id=template_id
+            )
+
     if not (_needs_llm(r) and allow_llm and llm.is_available()):
         return ParseOutcome(r.parsed, r.confidence, "ocr" if not r.has_text else "rules", r.has_text, warnings)
 
     try:
-        llm_parsed = llm.parse_with_llm(pdf_path)
+        result = llm.extract_with_llm(pdf_path)
     except Exception as e:
         warnings.append(f"LLM fallback failed: {e}")
         return ParseOutcome(r.parsed, r.confidence, "rules", r.has_text, warnings)
 
     if not r.has_text:
         # Scanned PDF: rules produced nothing, so trust the LLM entirely.
-        merged = llm_parsed
+        merged = result.parsed
         method = "llm"
     else:
-        merged = _merge(r.parsed, llm_parsed)
+        merged = _merge(r.parsed, result.parsed)
         method = "rules+llm"
 
+    # One-and-done learning: keep the emitted template only if it reproduces the LLM's own
+    # extraction on this same PDF (and only for text PDFs — templates need a text layer).
+    learned = None
+    if (
+        result.template
+        and result.template_confidence == "high"
+        and r.has_text
+        and merged.vendor_name
+    ):
+        from app.services.parsing import templates
+
+        ok, reasons = templates.validate_template(result.template, r.text, r.tables, result.parsed)
+        if ok:
+            learned = result.template
+        else:
+            warnings.append(f"Learned template failed validation: {'; '.join(reasons)}")
+
     confidence = rules._score(merged, warnings)
-    return ParseOutcome(merged, confidence, method, r.has_text, warnings)
+    return ParseOutcome(
+        merged, confidence, method, r.has_text, warnings,
+        learned_template=learned, llm_accounting=result.accounting,
+    )

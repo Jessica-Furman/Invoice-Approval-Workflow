@@ -72,7 +72,7 @@ def _status_and_reasons(outcome) -> tuple[str, list[dict]]:
 
 def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) -> models.Invoice:
     storage = storage or LocalStorage(settings.STORAGE_DIR)
-    outcome = parse_invoice(pdf_path)
+    outcome = parse_invoice(pdf_path, db=db)  # db enables the learned-template layer
     p = outcome.parsed
 
     storage_key = storage.put_file(pdf_path)
@@ -118,6 +118,10 @@ def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) 
         "payment_period": p.payment_period,
         "parsed": p.model_dump(mode="json"),
         "warnings": outcome.warnings,
+        # Advisory hints the LLM read off the invoice (CAPEX/OPEX, company code, cost center).
+        # Clarity/Coupa mappings remain authoritative.
+        "llm_accounting": outcome.llm_accounting,
+        "template_id": outcome.template_id,
     }
 
     # Replace line items.
@@ -142,6 +146,29 @@ def ingest_pdf(db: Session, pdf_path: str, storage: LocalStorage | None = None) 
         detail={"method": outcome.method, "confidence": outcome.confidence,
                 "line_items": len(p.line_items), "status": status},
     ))
+
+    # One-and-done learning: store the LLM-emitted, source-validated template so the next invoice
+    # from this vendor parses without the LLM.
+    if outcome.learned_template and p.vendor_name:
+        from app.services.parsing import llm, templates
+
+        db.flush()  # ensure inv.id for source_invoice_id
+        tpl = templates.save_template(
+            db, p.vendor_name, outcome.learned_template,
+            source_invoice_id=inv.id, llm_model=llm.LLM_MODEL,
+        )
+        db.add(models.AuditLog(
+            invoice_id=inv.id,
+            event="template_learned",
+            detail={"vendor_key": tpl.vendor_key, "validated": True},
+        ))
+    elif outcome.template_id is not None:
+        db.add(models.AuditLog(
+            invoice_id=inv.id,
+            event="template_applied",
+            detail={"template_id": outcome.template_id},
+        ))
+
     db.commit()
     return inv
 

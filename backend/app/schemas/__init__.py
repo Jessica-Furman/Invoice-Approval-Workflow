@@ -140,6 +140,8 @@ class InvoiceSummary(BaseModel):
     archived_at: datetime | None = None  # set when bulk-exported via the slider (hidden from board)
     line_item_count: int = 0
     matched_line_count: int = 0
+    # How the invoice was parsed: "rules" | "ocr" | "template" (auto-learned) | "llm" | "rules+llm".
+    parse_method: str | None = None
 
 
 class InvoiceDetail(InvoiceSummary):

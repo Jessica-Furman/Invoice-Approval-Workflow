@@ -61,6 +61,7 @@ def _summary(inv: models.Invoice) -> InvoiceSummary:
         archived_at=inv.archived_at,
         line_item_count=len(line_items),
         matched_line_count=matched,
+        parse_method=(inv.raw_extraction or {}).get("method"),
     )
 
 
