@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # Invoice parsing (M3)
     ANTHROPIC_API_KEY: str = ""
 
+    # Clarity API (live timesheet sync) — CSV import remains the fallback when unset/unreachable.
+    # Key-based auth: CLARITY_API_CLIENT_ID goes in the x-api-ppm-client header, CLARITY_API_KEY as
+    # "Authorization: Bearer <key>" (no login/session step needed).
+    CLARITY_API_URL: str = ""
+    CLARITY_API_CLIENT_ID: str = ""
+    CLARITY_API_KEY: str = ""
+    CLARITY_API_TIMEOUT_SECONDS: float = 8.0
+
     # Local mock paths
     INBOX_CONTRACTOR_DIR: str = str(REPO_ROOT / "data" / "inbox" / "contractor_invoices")
     INBOX_MATCHED_DIR: str = str(REPO_ROOT / "data" / "inbox" / "matched")

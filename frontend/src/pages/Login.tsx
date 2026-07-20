@@ -27,7 +27,7 @@ export function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-brand-inkdark">Welcome back</h1>
+        <h1 className="font-display text-2xl font-semibold text-brand-ink">Welcome back</h1>
         <p className="mt-1 text-sm text-slate-500">Sign in to process your invoices.</p>
       </div>
 
@@ -85,10 +85,10 @@ export function Login({ onSwitchToSignup }: { onSwitchToSignup: () => void }) {
 
 // Shared form primitives (kept local to the auth pages).
 export const inputClass =
-  "w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 py-2.5 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none";
+  "w-full rounded-lg border border-slate-200 bg-white pl-10 pr-3 py-2.5 text-sm transition-shadow duration-150 focus:border-brand-green focus:shadow-glow focus:outline-none";
 export const submitClass =
-  "flex w-full items-center justify-center gap-2 rounded-lg bg-brand-inkdark py-2.5 text-sm font-semibold text-white transition hover:bg-brand-ink disabled:opacity-60";
-export const linkClass = "font-semibold text-brand-limedark hover:underline";
+  "flex w-full items-center justify-center gap-2 rounded-lg bg-brand-ink py-2.5 text-sm font-semibold text-white transition-colors duration-150 hover:bg-brand-navy disabled:opacity-60";
+export const linkClass = "font-semibold text-brand-ink hover:underline";
 
 /** Microsoft four-square brand mark (lucide has no brand logos). */
 export function MicrosoftLogo({ className }: { className?: string }) {

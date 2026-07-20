@@ -8,9 +8,11 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
+import pandas as pd
+
 from app import models
 from app.db.base import Base
-from app.services.clarity_import import import_timesheets
+from app.services.clarity_import import import_dataframe, import_timesheets
 from app.utils.names import clarity_to_first_last, normalize_name
 
 
@@ -106,3 +108,31 @@ def test_aggregates_and_is_idempotent(db: Session, tmp_path: Path):
     assert r2.timesheets_updated == 7
     assert r2.projects_created == 0
     assert db.scalar(select(func.count()).select_from(models.ClarityTimesheet)) == 7
+
+
+def test_same_entry_from_csv_and_api_date_formats_does_not_duplicate(db: Session):
+    """Regression: the CSV export writes '5/11/26' and the live API returns '2026-05-11T00:00:00'
+    for the SAME logical entry. Both must collapse to one row — otherwise a contractor's hours get
+    doubled during matching (the idempotency hash must key on the canonical parsed date, not the raw
+    source text)."""
+    cols = {
+        "Resource Name": ["Sarfaraz, Noorul"],
+        "Time Sheet Status": ["Posted"],
+        "Investment ID": ["PR00115"],
+        "Task Name": ["Dev"],
+        "Time Entry Hours": ["8.0"],
+    }
+    csv_like = pd.DataFrame({**cols, "Date Worked": ["5/11/26"]})
+    api_like = pd.DataFrame({**cols, "Date Worked": ["2026-05-11T00:00:00"]})
+
+    import_dataframe(db, csv_like)
+    import_dataframe(db, api_like)  # same entry, API date format
+
+    rows = db.scalars(
+        select(models.ClarityTimesheet).where(
+            models.ClarityTimesheet.contractor_name_normalized == "noorul sarfaraz"
+        )
+    ).all()
+    assert len(rows) == 1  # not 2 — the API import updated the CSV row in place
+    assert rows[0].hours == 8.0
+    assert rows[0].date_worked.isoformat() == "2026-05-11"

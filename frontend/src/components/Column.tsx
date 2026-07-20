@@ -72,17 +72,17 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) 
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs ${
-          active ? "border-brand-lime bg-lime-50 text-brand-limedark" : "border-slate-200 text-slate-500 hover:bg-slate-50"
+        className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors duration-150 ${
+          active ? "border-brand-green/60 bg-brand-greenSoft/60 text-brand-ink" : "border-slate-200 text-slate-500 hover:bg-slate-50"
         }`}
       >
-        <ArrowDownUp className="h-3.5 w-3.5" />
+        <ArrowDownUp className="h-3.5 w-3.5" strokeWidth={1.75} />
         Sort
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-slate-200 bg-white py-1 shadow-md">
             {SORT_OPTIONS.map((opt) => (
               <button
                 key={opt.key}
@@ -93,7 +93,7 @@ function SortMenu({ value, onChange }: { value: SortKey; onChange: (k: SortKey) 
                 className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs text-slate-600 hover:bg-slate-50"
               >
                 {opt.label}
-                {value === opt.key && <Check className="h-3.5 w-3.5 text-brand-limedark" />}
+                {value === opt.key && <Check className="h-3.5 w-3.5 text-brand-ink" strokeWidth={1.75} />}
               </button>
             ))}
           </div>

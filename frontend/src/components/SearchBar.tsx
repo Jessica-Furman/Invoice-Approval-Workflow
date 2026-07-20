@@ -89,9 +89,9 @@ export function SearchBar({
           }
         }}
         placeholder="Search vendors or invoice IDs…"
-        className={`relative w-full rounded-lg border bg-transparent pl-10 pr-9 py-2 text-sm transition focus:border-brand-lime focus:shadow-glow focus:outline-none ${
+        className={`relative w-full rounded-lg border bg-transparent pl-10 pr-9 py-2 text-sm transition-shadow duration-150 focus:border-brand-green focus:shadow-glow focus:outline-none ${
           dark
-            ? "border-slate-700 text-slate-100 placeholder:text-slate-500"
+            ? "border-white/15 text-white placeholder:text-white/35"
             : "border-slate-200"
         }`}
       />
@@ -125,10 +125,10 @@ export function SearchBar({
                 onChange(v);
                 setOpen(false);
               }}
-              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-lime-50"
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
             >
               <span className="flex items-center gap-2">
-                <Building2 className="h-3.5 w-3.5 text-brand-limedark" />
+                <Building2 className="h-3.5 w-3.5 text-slate-400" />
                 {v}
               </span>
               <span className="text-xs text-slate-400">
@@ -150,7 +150,7 @@ export function SearchBar({
                 onChange(i.invoice_number ?? String(i.id));
                 setOpen(false);
               }}
-              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-lime-50"
+              className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
             >
               <span className="flex items-center gap-2">
                 <Hash className="h-3.5 w-3.5 text-slate-400" />

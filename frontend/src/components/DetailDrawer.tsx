@@ -494,7 +494,7 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                   <button
                     onClick={() => csv.mutate()}
                     disabled={csv.isPending}
-                    className="rounded-lg bg-brand-lime px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm hover:bg-brand-limedark disabled:opacity-60"
+                    className="rounded-lg bg-brand-green px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm transition-colors duration-150 hover:bg-brand-greenHover disabled:opacity-60"
                   >
                     {csv.isPending ? "Generating…" : "Approve & Create CSV"}
                   </button>
@@ -502,7 +502,7 @@ export function DetailDrawer({ id, onClose }: { id: number; onClose: () => void 
                   <button
                     onClick={() => draftCsv.mutate()}
                     disabled={draftCsv.isPending}
-                    className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-60"
+                    className="rounded-lg bg-brand-ink px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:bg-brand-navy disabled:opacity-60"
                   >
                     {draftCsv.isPending ? "Generating…" : "Create Draft CSV File"}
                   </button>

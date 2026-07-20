@@ -39,13 +39,13 @@ function ProcessingIndicator() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand-lime bg-lime-50 px-4 py-3">
-      <Loader2 className="h-5 w-5 animate-spin text-brand-limedark" />
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand-green/50 bg-brand-greenSoft/60 px-4 py-3">
+      <Loader2 className="h-5 w-5 animate-spin text-brand-ink" strokeWidth={1.75} />
       <span className="text-sm font-medium text-brand-ink">{PROCESSING_MESSAGES[i]}</span>
       <span className="ml-1 flex gap-1">
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-lime [animation-delay:-0.3s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-lime [animation-delay:-0.15s]" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-lime" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-green [animation-delay:-0.3s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-green [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-green" />
       </span>
     </div>
   );
@@ -104,10 +104,12 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="h-10 w-1.5 rounded-full bg-brand-lime" />
+          <span className="h-9 w-1.5 rounded-full bg-brand-green" />
           <div>
-            <div className="text-xs uppercase tracking-wide text-slate-400">Platform › {TITLES[view]}</div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-brand-ink">{TITLES[view]}</h1>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Platform › {TITLES[view]}
+            </div>
+            <h1 className="text-2xl font-semibold tracking-tight text-brand-ink">{TITLES[view]}</h1>
           </div>
         </div>
         <input
@@ -121,20 +123,20 @@ export function Dashboard({ view, search }: { view: View; search: string }) {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setReportOpen(true)}
-            className="flex items-center gap-2 rounded-lg border border-brand-lime bg-white px-4 py-2.5 text-sm font-bold text-brand-inkdark transition hover:bg-lime-50"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink shadow-xs transition-colors duration-150 hover:bg-slate-50"
           >
-            <FileBarChart className="h-4 w-4" />
+            <FileBarChart className="h-4 w-4" strokeWidth={1.75} />
             Create Report
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={upload.isPending}
-            className="flex items-center gap-2 rounded-lg bg-brand-lime px-5 py-2.5 text-sm font-bold text-brand-inkdark shadow-[0_4px_14px_rgba(164,214,30,0.45)] transition hover:bg-brand-limeglow hover:shadow-[0_4px_20px_rgba(164,214,30,0.6)] disabled:cursor-not-allowed disabled:opacity-70"
+            className="flex items-center gap-2 rounded-lg bg-brand-green px-5 py-2.5 text-sm font-semibold text-brand-ink shadow-sm transition-colors duration-150 hover:bg-brand-greenHover disabled:cursor-not-allowed disabled:opacity-70"
           >
             {upload.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
             ) : (
-              <Plus className="h-4 w-4" />
+              <Plus className="h-4 w-4" strokeWidth={1.75} />
             )}
             {upload.isPending ? "Working…" : "Upload Invoice"}
           </button>

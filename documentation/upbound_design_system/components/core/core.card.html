@@ -1,0 +1,117 @@
+<!-- @dsCard group="Components" viewport="700x760" name="Core components" subtitle="Buttons, forms, feedback, overlays — the full core set." -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  body { margin: 0; padding: 24px; background: var(--surface-page); font-family: var(--font-body); }
+  .group { margin-bottom: 22px; }
+  .glabel { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .col { display: flex; flex-direction: column; gap: 12px; max-width: 320px; }
+  hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 22px 0; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const NS = window.UpboundGroupDesignSystem_ca0950;
+    const { Button, IconButton, Icon, Badge, Tag, Card, Input, Select, Checkbox, RadioGroup, Switch, Tabs, Toast, Tooltip, Dialog } = NS;
+
+    function Demo() {
+      const [tab, setTab] = React.useState("Overview");
+      const [plan, setPlan] = React.useState("Growth");
+      const [open, setOpen] = React.useState(false);
+      const G = ({ label, children }) => (
+        <div className="group"><div className="glabel">{label}</div>{children}</div>
+      );
+      return (
+        <div>
+          <G label="Buttons">
+            <div className="row">
+              <Button variant="primary" iconRight={<Icon name="arrow-up-right" size={18} />}>Get started</Button>
+              <Button variant="secondary">Secondary</Button>
+              <Button variant="outline">Outline</Button>
+              <Button variant="ghost">Ghost</Button>
+              <Button variant="primary" disabled>Disabled</Button>
+              <IconButton name="arrow-up-right" aria-label="Go" variant="primary" round />
+              <IconButton name="settings" aria-label="Settings" variant="outline" />
+            </div>
+          </G>
+
+          <G label="Badges & tags">
+            <div className="row">
+              <Badge tone="accent">New</Badge>
+              <Badge tone="neutral">Draft</Badge>
+              <Badge tone="success">Active</Badge>
+              <Badge tone="warning">Pending</Badge>
+              <Badge tone="danger">Overdue</Badge>
+              <Tag selected>Enterprise</Tag>
+              <Tag>Fintech</Tag>
+              <Tag onRemove={() => {}}>Removable</Tag>
+            </div>
+          </G>
+
+          <hr />
+
+          <G label="Form fields">
+            <div className="col">
+              <Input label="Work email" placeholder="you@company.com" iconLeft={<Icon name="mail" size={18} />} />
+              <Select label="Company size" options={["1–50", "51–500", "500+"]} />
+            </div>
+          </G>
+
+          <G label="Selection controls">
+            <div className="row" style={{ gap: 28 }}>
+              <div className="col">
+                <Checkbox label="Email me updates" defaultChecked />
+                <Checkbox label="Unchecked option" />
+                <Switch label="Enable notifications" defaultChecked />
+              </div>
+              <RadioGroup value={plan} onChange={setPlan} options={["Starter", "Growth", "Enterprise"]} />
+            </div>
+          </G>
+
+          <hr />
+
+          <G label="Navigation">
+            <Tabs tabs={["Overview", "Pricing", "FAQ"]} value={tab} onChange={setTab} />
+          </G>
+
+          <G label="Feedback & overlays">
+            <div className="row" style={{ alignItems: "flex-start" }}>
+              <Toast tone="success" title="Saved" onClose={() => {}}>Your changes are live.</Toast>
+              <Tooltip label="Copy link"><IconButton name="link" aria-label="Copy link" variant="outline" /></Tooltip>
+              <Button variant="secondary" onClick={() => setOpen(true)}>Open dialog</Button>
+            </div>
+          </G>
+
+          <G label="Card">
+            <Card interactive style={{ maxWidth: 300 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <Icon name="trending-up" size={20} color="var(--up-near-black)" />
+                <strong style={{ fontFamily: "var(--font-display)", fontSize: 17 }}>Enterprise lending</strong>
+              </div>
+              <p style={{ fontSize: 14, color: "var(--text-muted)", margin: 0 }}>Move your finances forward.</p>
+            </Card>
+          </G>
+
+          <Dialog open={open} onClose={() => setOpen(false)} title="Request a demo"
+            footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={() => setOpen(false)}>Send</Button></>}>
+            <p style={{ margin: 0 }}>We'll be in touch within one business day.</p>
+          </Dialog>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<Demo />);
+    setTimeout(() => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } }), 300);
+  </script>
+</body>
+</html>

@@ -85,7 +85,7 @@ function Narrative({ md }: { md: string }) {
       blocks.push(
         <h3
           key={`h-${blocks.length}`}
-          className="mt-5 border-t border-slate-100 pt-4 text-base font-bold text-brand-ink"
+          className="mt-5 border-t border-slate-100 pt-4 font-display text-base font-semibold text-brand-ink"
         >
           {line.slice(3)}
         </h3>,
@@ -114,9 +114,9 @@ function Narrative({ md }: { md: string }) {
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
-      <div className="mt-0.5 text-2xl font-bold text-brand-ink">{value}</div>
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-0.5 font-display text-2xl font-semibold text-brand-ink">{value}</div>
       {hint && <div className="mt-0.5 text-xs text-slate-500">{hint}</div>}
     </div>
   );
@@ -124,7 +124,7 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
       <h3 className="mb-3 text-sm font-semibold text-slate-800">{title}</h3>
       {children}
     </div>
@@ -317,13 +317,13 @@ export function ReportModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="h-fit w-full max-w-6xl rounded-2xl bg-slate-50 shadow-2xl"
+        className="h-fit w-full max-w-6xl rounded-2xl bg-brand-mist shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-t-2xl border-b border-slate-200 bg-white px-6 py-4">
-          <FileBarChart className="h-5 w-5 text-brand-limedark" />
-          <h2 className="text-lg font-extrabold tracking-tight text-brand-ink">Invoice Spend Report</h2>
+          <FileBarChart className="h-5 w-5 text-brand-ink" strokeWidth={1.75} />
+          <h2 className="font-display text-lg font-semibold tracking-tight text-brand-ink">Invoice Spend Report</h2>
 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -347,17 +347,17 @@ export function ReportModal({ onClose }: { onClose: () => void }) {
             <button
               onClick={() => report.mutate()}
               disabled={report.isPending}
-              className="flex items-center gap-2 rounded-lg bg-brand-lime px-4 py-2 text-sm font-bold text-brand-inkdark shadow-[0_4px_14px_rgba(164,214,30,0.45)] transition hover:bg-brand-limeglow disabled:cursor-not-allowed disabled:opacity-70"
+              className="flex items-center gap-2 rounded-lg bg-brand-green px-4 py-2 text-sm font-semibold text-brand-ink shadow-sm transition-colors duration-150 hover:bg-brand-greenHover disabled:cursor-not-allowed disabled:opacity-70"
             >
               {report.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
               ) : (
-                <Sparkles className="h-4 w-4" />
+                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
               )}
               {report.isPending ? "Analyzing…" : result ? "Regenerate" : "Generate"}
             </button>
             <button onClick={onClose} className="rounded p-1 hover:bg-slate-100">
-              <X className="h-5 w-5 text-slate-500" />
+              <X className="h-5 w-5 text-slate-500" strokeWidth={1.75} />
             </button>
           </div>
         </div>
@@ -377,8 +377,8 @@ export function ReportModal({ onClose }: { onClose: () => void }) {
           )}
 
           {report.isPending && (
-            <div className="flex items-center gap-3 rounded-lg border border-brand-lime bg-lime-50 px-4 py-3">
-              <Loader2 className="h-5 w-5 animate-spin text-brand-limedark" />
+            <div className="flex items-center gap-3 rounded-lg border border-brand-green/50 bg-brand-greenSoft/60 px-4 py-3">
+              <Loader2 className="h-5 w-5 animate-spin text-brand-ink" strokeWidth={1.75} />
               <span className="text-sm font-medium text-brand-ink">
                 Aggregating invoices and writing the executive summary…
               </span>
@@ -413,9 +413,9 @@ export function ReportModal({ onClose }: { onClose: () => void }) {
               </div>
 
               {result.narrative ? (
-                <div className="rounded-xl border border-slate-200 bg-white p-5">
-                  <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-limedark">
-                    <Sparkles className="h-3.5 w-3.5" />
+                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+                  <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-ink">
+                    <Sparkles className="h-3.5 w-3.5 text-brand-greenHover" strokeWidth={1.75} />
                     AI Executive Summary
                   </div>
                   <Narrative md={result.narrative} />

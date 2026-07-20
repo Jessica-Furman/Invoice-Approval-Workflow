@@ -1,0 +1,40 @@
+/* Upbound Group — Typography tokens
+   Two-font system: Poppins (headlines/display) + Inter (body/UI).
+   Never reverse the pairing. Hierarchy via weight & size only. */
+
+:root {
+  /* Families */
+  --font-display: "Poppins", "Arial", "Calibri", sans-serif;  /* headlines, display, subheads, pull quotes */
+  --font-body: "Inter", "Arial", "Calibri", sans-serif;       /* body, UI, captions, long-form */
+
+  /* Weights */
+  --fw-regular: 400;   /* @kind font */
+  --fw-medium: 500;    /* @kind font */
+  --fw-semibold: 600;  /* @kind font */
+  --fw-bold: 700;      /* @kind font */
+
+  /* Type scale — screen px approximations of the print scale (pt) in the brand guide */
+  --fs-display: 56px;   /* Display / H1 — Poppins Bold, sentence case, tight leading */
+  --fs-h1: 44px;
+  --fs-h2: 32px;        /* Heading / H2 — Poppins Semibold */
+  --fs-h3: 22px;        /* Subhead / H3 — Poppins Medium */
+  --fs-body-lg: 18px;
+  --fs-body: 16px;      /* Body — Inter Regular, 1.4 line height */
+  --fs-body-sm: 14px;
+  --fs-caption: 12px;   /* Caption / Label — Inter Bold, all caps, tracked */
+  --fs-micro: 11px;
+
+  /* Line heights */
+  --lh-tight: 1.05;     /* @kind font */
+  --lh-heading: 1.15;   /* @kind font */
+  --lh-snug: 1.3;       /* @kind font */
+  --lh-body: 1.4;       /* @kind font */
+  --lh-relaxed: 1.6;    /* @kind font */
+
+  /* Letter spacing */
+  --ls-display: -0.02em;   /* @kind font */
+  --ls-heading: -0.01em;   /* @kind font */
+  --ls-body: 0em;          /* @kind font */
+  --ls-caption: 0.12em;    /* @kind font */
+  --ls-descriptor: 0.28em; /* @kind font */
+}

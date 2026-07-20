@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.config import settings
 from app.db.base import get_db
+from app.services.clarity_sync import sync_contractors
 from app.services.coupa import coupa_csv_bytes, coupa_csv_filename, project_accounting
 from app.services.export_excel import workbook_from_detail
 from app.services.ingestion import ingest_pdf
@@ -71,21 +72,23 @@ async def upload_invoices(
 ) -> UploadResult:
     """Upload one or more contractor invoice PDFs, then parse + match + route each.
 
-    Runs the same pipeline the CLI does (`ingest_pdf` -> `match_invoice` -> `route_invoice`),
-    so an uploaded invoice lands on the dashboard exactly like the bundled samples. The Clarity
-    index is built once and reused across the batch.
+    Runs the same pipeline the CLI does (`ingest_pdf` -> `match_invoice` -> `route_invoice`), so an
+    uploaded invoice lands on the dashboard exactly like the bundled samples. Two passes: first
+    ingest every file (so we know every contractor + period in this batch), then pull fresh Clarity
+    data for all of them in one live-API sync (falling back to cached/CSV data if it fails), then
+    build the Clarity index once and match + route each invoice.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
     storage = LocalStorage(settings.STORAGE_DIR)
-    index = ClarityIndex.build(db)
-    results: list[UploadResultItem] = []
+    results: list[UploadResultItem | None] = [None] * len(files)
+    ingested: list[tuple[int, models.Invoice]] = []
 
-    for upload in files:
+    for i, upload in enumerate(files):
         name = upload.filename or "invoice.pdf"
         if not name.lower().endswith(".pdf"):
-            results.append(UploadResultItem(filename=name, ok=False, error="Not a PDF"))
+            results[i] = UploadResultItem(filename=name, ok=False, error="Not a PDF")
             continue
         # Preserve the original filename in a temp dir so ingest's stem fallback (used when no
         # invoice number is parsed) stays meaningful.
@@ -95,29 +98,44 @@ async def upload_invoices(
             with tmp_path.open("wb") as out:
                 shutil.copyfileobj(upload.file, out)
             inv = ingest_pdf(db, str(tmp_path), storage=storage)
+            ingested.append((i, inv))
+        except Exception as e:  # noqa: BLE001 — surface per-file failures, keep batch going
+            db.rollback()
+            results[i] = UploadResultItem(filename=name, ok=False, error=str(e))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    contractor_names = sorted(
+        {li.contractor_name for _, inv in ingested for li in inv.line_items if li.contractor_name}
+    )
+    starts = [inv.payment_period_start for _, inv in ingested if inv.payment_period_start]
+    ends = [inv.payment_period_end for _, inv in ingested if inv.payment_period_end]
+    sync_contractors(db, contractor_names, min(starts) if starts else None, max(ends) if ends else None)
+
+    index = ClarityIndex.build(db)
+    for i, inv in ingested:
+        name = files[i].filename or "invoice.pdf"
+        try:
             match_invoice(db, inv, index)
             route_invoice(db, inv)
             db.commit()
             db.refresh(inv)
-            results.append(
-                UploadResultItem(
-                    filename=name,
-                    ok=True,
-                    invoice_id=inv.id,
-                    invoice_number=inv.invoice_number,
-                    status=inv.status,
-                )
+            results[i] = UploadResultItem(
+                filename=name,
+                ok=True,
+                invoice_id=inv.id,
+                invoice_number=inv.invoice_number,
+                status=inv.status,
             )
         except Exception as e:  # noqa: BLE001 — surface per-file failures, keep batch going
             db.rollback()
-            results.append(UploadResultItem(filename=name, ok=False, error=str(e)))
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            results[i] = UploadResultItem(filename=name, ok=False, error=str(e))
 
+    final_results = [r for r in results if r is not None]
     return UploadResult(
-        uploaded=sum(1 for r in results if r.ok),
-        failed=sum(1 for r in results if not r.ok),
-        results=results,
+        uploaded=sum(1 for r in final_results if r.ok),
+        failed=sum(1 for r in final_results if not r.ok),
+        results=final_results,
     )
 
 
@@ -363,6 +381,8 @@ def rematch(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDetail:
     inv = db.get(models.Invoice, invoice_id)
     if inv is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    contractor_names = sorted({li.contractor_name for li in inv.line_items if li.contractor_name})
+    sync_contractors(db, contractor_names, inv.payment_period_start, inv.payment_period_end)
     match_invoice(db, inv, ClarityIndex.build(db))
     route_invoice(db, inv)
     db.commit()

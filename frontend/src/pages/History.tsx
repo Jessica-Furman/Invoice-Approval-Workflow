@@ -27,10 +27,10 @@ export function History({ search }: { search: string }) {
   return (
     <div>
       <div className="mb-6 flex items-center gap-3">
-        <span className="h-10 w-1.5 rounded-full bg-brand-lime" />
+        <span className="h-9 w-1.5 rounded-full bg-brand-green" />
         <div>
-          <div className="text-xs uppercase tracking-wide text-slate-400">Platform › History</div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-brand-ink">History</h1>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Platform › History</div>
+          <h1 className="text-2xl font-semibold tracking-tight text-brand-ink">History</h1>
         </div>
       </div>
 
@@ -47,7 +47,7 @@ export function History({ search }: { search: string }) {
       )}
 
       {data && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">

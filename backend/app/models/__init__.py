@@ -161,6 +161,22 @@ class ClarityProject(Base):
     spend: Mapped[float | None] = mapped_column(Float)
 
 
+class ClaritySyncStatus(Base):
+    """Single-row status of the last Clarity data sync, driving the dashboard's fallback indicator.
+
+    `source` is one of "api" (live Clarity API succeeded), "csv_fallback" (API attempt failed,
+    running on cached/previously-imported data), "csv_manual" (a CSV/Excel export was uploaded by
+    hand), or "unconfigured" (no CLARITY_API_KEY set)."""
+
+    __tablename__ = "clarity_sync_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[str] = mapped_column(String(32), default="unconfigured")
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(String(1024))
+
+
 class NameCrossref(Base):
     """Invoice-name -> Clarity-name mappings (User Story 7)."""
 

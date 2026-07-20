@@ -57,13 +57,13 @@ export default function App() {
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="flex min-h-screen">
-      {/* Sidebar — Upbound near-black with lime accents */}
-      <aside className="flex w-60 flex-col bg-brand-inkdark">
-        <div className="px-6 py-6">
-          <img src="/logo.png" alt="inVoicee" className="h-10 w-auto" />
+    <div className="flex min-h-screen bg-brand-mist">
+      {/* Sidebar — Upbound near-black, flat, with a single green active state. */}
+      <aside className="flex w-60 shrink-0 flex-col bg-brand-ink">
+        <div className="px-6 py-7">
+          <img src="/logo-white.png" alt="inVoicee" className="h-8 w-auto" />
         </div>
-        <nav className="flex-1 space-y-1.5 px-3">
+        <nav className="flex-1 space-y-1 px-3">
           {mode === "contractor"
             ? navItems.map((item) => {
                 const active = view === item.view;
@@ -71,13 +71,13 @@ export default function App() {
                   <button
                     key={item.label}
                     onClick={() => setView(item.view)}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors duration-150 ${
                       active
-                        ? "bg-brand-lime font-semibold text-brand-inkdark shadow-[0_0_16px_rgba(164,214,30,0.45)]"
-                        : "text-slate-200 hover:bg-white/10 hover:text-brand-lime"
+                        ? "bg-brand-green font-semibold text-brand-ink"
+                        : "font-medium text-white/60 hover:bg-white/[0.06] hover:text-white"
                     }`}
                   >
-                    <item.icon className="h-[18px] w-[18px]" />
+                    <item.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
                     {item.label}
                   </button>
                 );
@@ -88,77 +88,77 @@ export default function App() {
                   <button
                     key={item.label}
                     onClick={() => setOtherView(item.view)}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors duration-150 ${
                       active
-                        ? "bg-brand-lime font-semibold text-brand-inkdark shadow-[0_0_16px_rgba(164,214,30,0.45)]"
-                        : "text-slate-200 hover:bg-white/10 hover:text-brand-lime"
+                        ? "bg-brand-green font-semibold text-brand-ink"
+                        : "font-medium text-white/60 hover:bg-white/[0.06] hover:text-white"
                     }`}
                   >
-                    <item.icon className="h-[18px] w-[18px]" />
+                    <item.icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
                     {item.label}
                   </button>
                 );
               })}
         </nav>
         <div className="border-t border-white/10 p-3">
-          <a className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-white/10 hover:text-brand-lime">
-            <Settings className="h-4 w-4" />
+          <a className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-white/50 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white">
+            <Settings className="h-4 w-4" strokeWidth={1.75} />
             Settings
           </a>
           <div className="mt-2 flex items-center gap-3 px-3 py-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-lime text-sm font-bold text-brand-inkdark">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-green text-xs font-bold text-brand-ink">
               {initials(user.name)}
             </div>
             <div className="min-w-0 flex-1 text-xs">
               <div className="truncate font-medium text-white">{user.name}</div>
-              <div className="truncate text-slate-400">{user.email}</div>
+              <div className="truncate text-white/40">{user.email}</div>
             </div>
             <button
               onClick={signOut}
               title="Sign out"
               aria-label="Sign out"
-              className="rounded-md p-1.5 text-slate-400 transition hover:bg-white/10 hover:text-brand-lime"
+              className="rounded-md p-1.5 text-white/40 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
             >
-              <LogOut className="h-4 w-4" />
+              <LogOut className="h-4 w-4" strokeWidth={1.75} />
             </button>
           </div>
         </div>
       </aside>
 
-      {/* Main — the "Other Invoice Types" board uses a dark theme; contractor stays light. */}
-      <div className={`flex-1 ${dark ? "bg-slate-950" : "bg-slate-50"}`}>
+      {/* Main — the "Other Invoice Types" board uses the dark Upbound surface; contractor stays light. */}
+      <div className={`flex-1 ${dark ? "bg-brand-navy" : "bg-brand-mist"}`}>
         <header
-          className={`flex items-center gap-4 border-b px-8 py-3 ${
-            dark ? "border-slate-800 bg-slate-900" : "border-slate-200 bg-white"
+          className={`flex items-center gap-4 border-b px-8 py-3.5 ${
+            dark ? "border-white/10 bg-brand-navy" : "border-black/[0.06] bg-white"
           }`}
         >
           <SearchBar value={search} onChange={setSearch} dark={dark} />
           {/* Board switcher — sits right next to the search bar. */}
-          <div className={`flex shrink-0 items-center gap-1 rounded-lg p-1 ${dark ? "bg-slate-800" : "bg-slate-100"}`}>
+          <div className={`flex shrink-0 items-center gap-1 rounded-lg p-1 ${dark ? "bg-white/[0.06]" : "bg-black/[0.04]"}`}>
             <button
               onClick={() => setMode("contractor")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors duration-150 ${
                 mode === "contractor"
                   ? "bg-white text-brand-ink shadow-sm"
                   : dark
-                    ? "text-slate-400 hover:text-slate-100"
+                    ? "text-white/45 hover:text-white/80"
                     : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              <FileText className="h-4 w-4" />
+              <FileText className="h-4 w-4" strokeWidth={1.75} />
               Contractor
             </button>
             <button
               onClick={() => setMode("other")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors duration-150 ${
                 mode === "other"
-                  ? "bg-brand-lime text-brand-inkdark shadow-sm"
+                  ? "bg-brand-green text-brand-ink shadow-sm"
                   : dark
-                    ? "text-slate-400 hover:text-slate-100"
+                    ? "text-white/45 hover:text-white/80"
                     : "text-slate-500 hover:text-slate-800"
               }`}
             >
-              <Boxes className="h-4 w-4" />
+              <Boxes className="h-4 w-4" strokeWidth={1.75} />
               Other Invoice Types
             </button>
           </div>

@@ -1,0 +1,58 @@
+/* Upbound Group — Base element defaults built on the tokens. */
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text-body);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: var(--font-display);
+  color: var(--text-strong);
+  margin: 0;
+  text-wrap: balance;
+}
+
+h1 { font-size: var(--fs-display); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: var(--ls-display); }
+h2 { font-size: var(--fs-h2); font-weight: var(--fw-semibold); line-height: var(--lh-heading); letter-spacing: var(--ls-heading); }
+h3 { font-size: var(--fs-h3); font-weight: var(--fw-medium); line-height: var(--lh-snug); }
+
+p { margin: 0; }
+
+a {
+  color: var(--text-strong);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+a:hover { opacity: 0.7; }
+
+/* Caption / label helper — Inter bold, all caps, tracked */
+.up-label {
+  font-family: var(--font-body);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-caption);
+  text-transform: uppercase;
+}
+
+/* The signature green dot */
+.up-dot {
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  border-radius: var(--radius-dot);
+  background: var(--up-green);
+  vertical-align: middle;
+}
+
+::selection { background: var(--up-green); color: var(--up-near-black); }

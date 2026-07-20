@@ -14,3 +14,12 @@ from app.config import settings
 @pytest.fixture(autouse=True)
 def _no_llm_key(monkeypatch):
     monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "")
+
+
+@pytest.fixture(autouse=True)
+def _no_clarity_api(monkeypatch):
+    """Force the live Clarity API off for every test — no test should ever attempt a real call.
+    Tests exercising the sync path monkeypatch `clarity_api.fetch_timesheets` instead."""
+    monkeypatch.setattr(settings, "CLARITY_API_URL", "")
+    monkeypatch.setattr(settings, "CLARITY_API_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "CLARITY_API_KEY", "")

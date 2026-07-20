@@ -11,34 +11,34 @@ export function AuthScreen() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Brand panel — Upbound ink with lime accents, mirrors the app sidebar. */}
-      <aside className="relative hidden w-1/2 flex-col justify-between bg-brand-inkdark p-12 lg:flex">
+      {/* Brand panel — Upbound near-black with a single green accent, mirrors the app sidebar. */}
+      <aside className="relative hidden w-1/2 flex-col justify-between bg-brand-ink p-12 lg:flex">
         <div>
-          <img src="/logo.png" alt="inVoicee" className="h-11 w-auto" />
+          <img src="/logo-white.png" alt="inVoicee" className="h-9 w-auto" />
         </div>
 
         <div className="space-y-6">
-          <h2 className="text-3xl font-bold leading-tight text-white">
+          <h2 className="font-display text-3xl font-semibold leading-tight text-white">
             Contractor invoices,
             <br />
             matched and routed.
           </h2>
-          <ul className="space-y-3 text-slate-300">
+          <ul className="space-y-3 text-white/60">
             <Bullet icon={FileText}>Parse invoice PDFs automatically</Bullet>
             <Bullet icon={CheckCircle2}>Match hours against Clarity timekeeping</Bullet>
             <Bullet icon={ShieldCheck}>Your invoices stay private to your account</Bullet>
           </ul>
         </div>
 
-        <p className="text-xs text-slate-500">Upbound Group · Accounts Payable</p>
+        <p className="text-xs text-white/35">Upbound Group · Accounts Payable</p>
       </aside>
 
       {/* Form side */}
-      <main className="flex w-full items-center justify-center bg-slate-50 p-6 lg:w-1/2">
+      <main className="flex w-full items-center justify-center bg-brand-mist p-6 lg:w-1/2">
         <div className="w-full max-w-sm">
           {/* Compact logo for narrow screens where the brand panel is hidden. */}
           <div className="mb-8 lg:hidden">
-            <img src="/logo.png" alt="inVoicee" className="h-9 w-auto" />
+            <img src="/logo.png" alt="inVoicee" className="h-8 w-auto" />
           </div>
 
           {mode === "login" ? (
@@ -55,7 +55,7 @@ export function AuthScreen() {
 function Bullet({ icon: Icon, children }: { icon: typeof FileText; children: React.ReactNode }) {
   return (
     <li className="flex items-center gap-3 text-sm">
-      <Icon className="h-5 w-5 shrink-0 text-brand-lime" />
+      <Icon className="h-5 w-5 shrink-0 text-brand-green" strokeWidth={1.75} />
       {children}
     </li>
   );

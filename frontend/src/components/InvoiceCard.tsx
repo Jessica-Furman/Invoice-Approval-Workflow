@@ -27,7 +27,7 @@ export function InvoiceCard({
   return (
     <button
       onClick={onClick}
-      className={`w-full rounded-xl border border-slate-200 border-l-4 ${accentBorder[invoice.status] ?? "border-l-slate-300"} bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md hover:ring-2 hover:ring-brand-lime/40`}
+      className={`w-full rounded-xl border border-slate-200 border-l-4 ${accentBorder[invoice.status] ?? "border-l-slate-300"} bg-white p-4 text-left shadow-xs transition-all duration-150 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md`}
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-slate-400">

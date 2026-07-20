@@ -235,10 +235,15 @@ export async function fetchClarityEntries(
   return data;
 }
 
+export type ClaritySource = "api" | "csv_fallback" | "csv_manual" | "unconfigured";
+
 export interface ClaritySummary {
   timesheets: number;
   projects: number;
   contractors: number;
+  source: ClaritySource;
+  last_synced_at: string | null;
+  last_error: string | null;
 }
 
 export async function fetchClaritySummary(): Promise<ClaritySummary> {

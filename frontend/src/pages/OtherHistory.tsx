@@ -9,8 +9,8 @@ const statusLabel: Record<OtherStatus, string> = {
   missing_data: "MISSING DATA",
 };
 const statusChip: Record<OtherStatus, string> = {
-  all_data_found: "bg-emerald-100 text-emerald-700",
-  missing_data: "bg-amber-100 text-amber-800",
+  all_data_found: "bg-brand-green/15 text-brand-green",
+  missing_data: "bg-amber-400/15 text-amber-400",
 };
 
 function matches(inv: OtherInvoiceSummary, q: string): boolean {
@@ -35,30 +35,30 @@ export function OtherHistory({ search }: { search: string }) {
   return (
     <div>
       <div className="mb-6 flex items-center gap-3">
-        <span className="h-10 w-1.5 rounded-full bg-brand-lime" />
+        <span className="h-9 w-1.5 rounded-full bg-brand-green" />
         <div>
-          <div className="text-xs uppercase tracking-wide text-slate-400">Platform › Other History</div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-100">Other Invoice History</h1>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-white/40">Platform › Other History</div>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Other Invoice History</h1>
         </div>
       </div>
 
-      <p className="mb-4 text-sm text-slate-400">
+      <p className="mb-4 text-sm text-white/50">
         Every hardware / software / subscription invoice processed. Separate from the contractor
         History. Deleted invoices are removed permanently.
       </p>
 
-      {isLoading && <div className="text-slate-400">Loading history…</div>}
+      {isLoading && <div className="text-white/40">Loading history…</div>}
       {isError && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
           Couldn’t load history. Is the backend running on :8000?
         </div>
       )}
 
       {data && (
-        <div className="overflow-hidden rounded-xl border border-slate-700 bg-slate-800">
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-brand-charcoal">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700 bg-slate-800 text-left text-xs uppercase tracking-wide text-slate-400">
+              <tr className="border-b border-white/10 bg-white/[0.04] text-left text-xs uppercase tracking-wide text-white/40">
                 <th className="px-4 py-2.5 font-semibold">Invoice #</th>
                 <th className="px-4 py-2.5 font-semibold">Vendor</th>
                 <th className="px-4 py-2.5 font-semibold">Supplier #</th>
@@ -70,7 +70,7 @@ export function OtherHistory({ search }: { search: string }) {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-white/40">
                     No other invoices in history yet.
                   </td>
                 </tr>
@@ -79,19 +79,19 @@ export function OtherHistory({ search }: { search: string }) {
                 <tr
                   key={inv.id}
                   onClick={() => setSelected(inv.id)}
-                  className="cursor-pointer border-b border-slate-800 hover:bg-slate-700/40"
+                  className="cursor-pointer border-b border-white/10 hover:bg-white/[0.05]"
                 >
-                  <td className="px-4 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="px-4 py-2.5 font-mono text-xs text-white/40">
                     {inv.invoice_number ?? inv.id}
                   </td>
-                  <td className="px-4 py-2.5 font-medium text-slate-100">
+                  <td className="px-4 py-2.5 font-medium text-white">
                     {inv.vendor_name ?? "Unknown vendor"}
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-slate-400">
+                  <td className="px-4 py-2.5 font-mono text-xs text-white/40">
                     {inv.supplier_number ?? "—"}
                   </td>
-                  <td className="px-4 py-2.5 text-slate-300">{date(inv.date_received)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-slate-100">
+                  <td className="px-4 py-2.5 text-white/60">{date(inv.date_received)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono text-white">
                     {money(inv.total_invoice_cost)}
                   </td>
                   <td className="px-4 py-2.5">

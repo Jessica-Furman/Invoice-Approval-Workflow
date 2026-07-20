@@ -31,7 +31,7 @@ export function Signup({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-brand-inkdark">Create your account</h1>
+        <h1 className="font-display text-2xl font-semibold text-brand-ink">Create your account</h1>
         <p className="mt-1 text-sm text-slate-500">{ACCESS_HINT}</p>
       </div>
 

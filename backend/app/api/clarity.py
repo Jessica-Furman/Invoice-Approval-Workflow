@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -35,11 +36,23 @@ async def import_clarity(
         result = import_timesheets(db, str(dest))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+    status = db.get(models.ClaritySyncStatus, 1)
+    if status is None:
+        status = models.ClaritySyncStatus(id=1)
+        db.add(status)
+    status.source = "csv_manual"
+    status.last_attempt_at = datetime.utcnow()
+    status.last_success_at = datetime.utcnow()
+    status.last_error = None
+    db.commit()
+
     return {"file": file.filename, **result.as_dict()}
 
 
 @router.get("/summary")
 def summary(db: Session = Depends(get_db)) -> dict:
+    status = db.get(models.ClaritySyncStatus, 1)
     return {
         "timesheets": db.scalar(select(func.count()).select_from(models.ClarityTimesheet)) or 0,
         "projects": db.scalar(select(func.count()).select_from(models.ClarityProject)) or 0,
@@ -47,6 +60,11 @@ def summary(db: Session = Depends(get_db)) -> dict:
             select(func.count(func.distinct(models.ClarityTimesheet.contractor_name_normalized)))
         )
         or 0,
+        "source": status.source if status else "unconfigured",
+        "last_synced_at": (
+            (status.last_success_at.isoformat() if status.last_success_at else None) if status else None
+        ),
+        "last_error": status.last_error if status else None,
     }
 
 

@@ -33,7 +33,7 @@ export function parseMethodBadge(
 ): { label: string; cls: string } | null {
   if (!method) return null;
   if (method.includes("llm")) {
-    return { label: "AI-PARSED", cls: "bg-violet-100 text-violet-700" };
+    return { label: "AI-PARSED", cls: "bg-brand-navy/10 text-brand-navy" };
   }
   if (method === "template") {
     return { label: "AUTO-LEARNED", cls: "bg-sky-100 text-sky-700" };

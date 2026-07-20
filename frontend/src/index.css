@@ -4,6 +4,21 @@
 
 body {
   margin: 0;
-  background: #f8fafc;
-  color: #0f172a;
+  background: #f4f4f5;
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Headlines use Poppins (display); body/UI stays on Inter via the Tailwind default. */
+h1,
+h2,
+h3 {
+  font-family: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: #b3ff33;
+  color: #1a1a1a;
 }

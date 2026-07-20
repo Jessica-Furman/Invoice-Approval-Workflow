@@ -1,0 +1,103 @@
+<!-- @dsCard group="Marketing" viewport="1200x780" name="Upbound marketing site" subtitle="Interactive click-through — home, solutions, investors, careers, sign-in." -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upbound Group</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; }
+  #root { min-height: 100vh; background: var(--surface-page); }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" src="Chrome.jsx"></script>
+  <script type="text/babel" src="HomeView.jsx"></script>
+  <script type="text/babel" src="SolutionsView.jsx"></script>
+  <script type="text/babel" src="InvestorsView.jsx"></script>
+  <script type="text/babel" data-presets="react">
+    const NS = window.UpboundGroupDesignSystem_ca0950;
+    const { Button, Icon, Dialog, Input, Select } = NS;
+
+    function AboutView({ onDemo }) {
+      return (
+        <div>
+          <section style={{ background: "var(--up-navy)", padding: "80px 40px" }}>
+            <div style={{ maxWidth: 820, margin: "0 auto", textAlign: "center" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--up-green)", marginBottom: 16 }}>Our mission</div>
+              <h1 style={{ color: "var(--up-off-white)", fontSize: 52, lineHeight: 1.05 }}>We exist to elevate financial opportunity for all<span style={{ color: "var(--up-green)" }}>.</span></h1>
+              <p style={{ color: "var(--up-cool-grey)", marginTop: 22, fontSize: 18, lineHeight: 1.55, maxWidth: 620, marginInline: "auto" }}>
+                Upbound Group is a modern, enterprise-focused organization built on forward momentum, clarity, and confidence — optimistic and ambitious, but grounded and trustworthy.
+              </p>
+              <div style={{ marginTop: 32 }}>
+                <Button variant="primary" size="lg" onClick={onDemo} iconRight={<Icon name="arrow-up-right" size={20} />}>Work with us</Button>
+              </div>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function DemoDialog({ open, onClose }) {
+      const [sent, setSent] = React.useState(false);
+      React.useEffect(() => { if (open) setSent(false); }, [open]);
+      return (
+        <Dialog open={open} onClose={onClose} title={sent ? "Thanks — we're on it." : "Request a demo"} width={460}
+          footer={sent
+            ? <Button onClick={onClose}>Done</Button>
+            : <><Button variant="ghost" onClick={onClose}>Cancel</Button><Button onClick={() => setSent(true)}>Send request</Button></>}>
+          {sent ? (
+            <p style={{ margin: 0 }}>A member of our team will reach out within one business day to help you move forward.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <Input label="Work email" placeholder="you@company.com" iconLeft={<Icon name="mail" size={18} />} />
+              <Input label="Company" placeholder="Company name" />
+              <Select label="What are you interested in?" options={["Lending", "Payments", "Marketplace", "Analytics"]} />
+            </div>
+          )}
+        </Dialog>
+      );
+    }
+
+    function App() {
+      const [route, setRoute] = React.useState("home");
+      const [demo, setDemo] = React.useState(false);
+      const openDemo = () => setDemo(true);
+      const navigate = (r) => { setRoute(r); window.scrollTo({ top: 0 }); };
+
+      let view;
+      if (route === "home") view = <HomeView onDemo={openDemo} onNavigate={navigate} />;
+      else if (route === "solutions") view = <SolutionsView onDemo={openDemo} />;
+      else if (route === "investors") view = <InvestorsView onDemo={openDemo} />;
+      else if (route === "careers") view = <CareersView onDemo={openDemo} />;
+      else if (route === "signin") view = <SignInView onNavigate={navigate} />;
+      else view = <AboutView onDemo={openDemo} />;
+
+      const chrome = route !== "signin";
+
+      return (
+        <div>
+          {chrome && <Header route={route} onNavigate={navigate} onDemo={openDemo} />}
+          {view}
+          {chrome && <Footer onNavigate={navigate} />}
+          <DemoDialog open={demo} onClose={() => setDemo(false)} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+    // Re-render Lucide icons after React paints (and on route change via interval fallback).
+    const paintIcons = () => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+    setTimeout(paintIcons, 400);
+    document.addEventListener("click", () => setTimeout(paintIcons, 120));
+  </script>
+</body>
+</html>

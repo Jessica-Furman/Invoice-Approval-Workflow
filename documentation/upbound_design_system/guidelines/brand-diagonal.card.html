@@ -1,0 +1,24 @@
+<!-- @dsCard group="Brand" viewport="700x180" name="The diagonal" subtitle="~30° rising left to right. Divides surfaces with energy." -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../styles.css">
+<style>
+  body { margin: 0; background: var(--surface-card); font-family: var(--font-body); }
+  .stage { position: relative; height: 180px; overflow: hidden; background: var(--up-off-white); }
+  .navy { position: absolute; inset: 0 45% 0 -20%; background: var(--up-navy); transform: skewX(-30deg); transform-origin: bottom right; }
+  .label { position: absolute; left: 26px; top: 50%; transform: translateY(-50%); color: var(--up-off-white); font-family: var(--font-display); font-weight: 700; font-size: 24px; }
+  .right { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); text-align: right; }
+  .rl { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); }
+  .rn { font-family: var(--font-display); font-weight: 600; font-size: 20px; color: var(--text-strong); margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="navy"></div>
+    <div class="label">Forward<br>momentum</div>
+    <div class="right"><div class="rl">Signature device</div><div class="rn">30° diagonal cut</div></div>
+  </div>
+</body>
+</html>

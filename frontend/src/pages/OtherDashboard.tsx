@@ -23,8 +23,8 @@ const TITLES: Record<OtherView, string> = {
 type ColumnKind = "missing" | "found" | "all";
 const COLUMN_CFG: Record<ColumnKind, { label: string; icon: typeof FolderOpen; text: string; iconClass: string }> = {
   missing: { label: "Missing Data", icon: AlertCircle, text: "text-amber-400", iconClass: "h-4 w-4 text-amber-400" },
-  found: { label: "All Data Found", icon: CheckCircle2, text: "text-emerald-400", iconClass: "h-4 w-4 text-emerald-400" },
-  all: { label: "All", icon: FolderOpen, text: "text-slate-300", iconClass: "h-4 w-4 text-slate-400" },
+  found: { label: "All Data Found", icon: CheckCircle2, text: "text-brand-green", iconClass: "h-4 w-4 text-brand-green" },
+  all: { label: "All", icon: FolderOpen, text: "text-white/60", iconClass: "h-4 w-4 text-white/50" },
 };
 
 function OtherColumn({
@@ -41,15 +41,15 @@ function OtherColumn({
   return (
     <div className="flex-1 min-w-[280px]">
       <div className="mb-3 flex h-10 items-center gap-2">
-        <Icon className={cfg.iconClass} />
+        <Icon className={cfg.iconClass} strokeWidth={1.75} />
         <h2 className={`text-sm font-bold uppercase tracking-wide ${cfg.text}`}>{cfg.label}</h2>
-        <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[11px] font-semibold text-slate-300">
+        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/60">
           {invoices.length}
         </span>
       </div>
       <div className="flex flex-col gap-3">
         {invoices.length === 0 && (
-          <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center text-xs text-slate-500">
+          <div className="rounded-xl border border-dashed border-white/15 p-6 text-center text-xs text-white/40">
             No invoices
           </div>
         )}
@@ -79,9 +79,9 @@ function ProcessingIndicator() {
     return () => clearInterval(t);
   }, []);
   return (
-    <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand-lime bg-lime-50 px-4 py-3">
-      <Loader2 className="h-5 w-5 animate-spin text-brand-limedark" />
-      <span className="text-sm font-medium text-brand-ink">{PROCESSING_MESSAGES[i]}</span>
+    <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand-green/30 bg-white/[0.06] px-4 py-3">
+      <Loader2 className="h-5 w-5 animate-spin text-brand-green" strokeWidth={1.75} />
+      <span className="text-sm font-medium text-white">{PROCESSING_MESSAGES[i]}</span>
     </div>
   );
 }
@@ -122,10 +122,10 @@ export function OtherDashboard({ view, search }: { view: OtherView; search: stri
     <div>
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="h-10 w-1.5 rounded-full bg-brand-lime" />
+          <span className="h-9 w-1.5 rounded-full bg-brand-green" />
           <div>
-            <div className="text-xs uppercase tracking-wide text-slate-400">Platform › {TITLES[view]}</div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-slate-100">{TITLES[view]}</h1>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-white/40">Platform › {TITLES[view]}</div>
+            <h1 className="text-2xl font-semibold tracking-tight text-white">{TITLES[view]}</h1>
           </div>
         </div>
         <input
@@ -139,32 +139,32 @@ export function OtherDashboard({ view, search }: { view: OtherView; search: stri
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={upload.isPending}
-          className="flex items-center gap-2 rounded-lg bg-brand-lime px-5 py-2.5 text-sm font-bold text-brand-inkdark shadow-[0_4px_14px_rgba(164,214,30,0.45)] transition hover:bg-brand-limeglow hover:shadow-[0_4px_20px_rgba(164,214,30,0.6)] disabled:cursor-not-allowed disabled:opacity-70"
+          className="flex items-center gap-2 rounded-lg bg-brand-green px-5 py-2.5 text-sm font-semibold text-brand-ink shadow-sm transition-colors duration-150 hover:bg-brand-greenHover disabled:cursor-not-allowed disabled:opacity-70"
         >
-          {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} /> : <Plus className="h-4 w-4" strokeWidth={1.75} />}
           {upload.isPending ? "Working…" : "Upload Invoice"}
         </button>
       </div>
 
       {upload.isPending && <ProcessingIndicator />}
       {upload.isError && (
-        <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
           Upload failed. Is the backend running on :8000?
         </div>
       )}
       {uploadResult && (
-        <div className="mb-4 rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm text-slate-300">
-          Uploaded <span className="font-semibold text-emerald-400">{uploadResult.uploaded}</span>
+        <div className="mb-4 rounded-lg border border-white/10 bg-white/[0.05] p-4 text-sm text-white/70">
+          Uploaded <span className="font-semibold text-brand-green">{uploadResult.uploaded}</span>
           {uploadResult.failed > 0 && (
-            <>, <span className="text-rose-400">{uploadResult.failed} failed</span></>
+            <>, <span className="text-rose-300">{uploadResult.failed} failed</span></>
           )}
           .
         </div>
       )}
 
-      {isLoading && <div className="text-slate-400">Loading invoices…</div>}
+      {isLoading && <div className="text-white/40">Loading invoices…</div>}
       {isError && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
           Couldn’t reach the API. Is the backend running on :8000?
         </div>
       )}

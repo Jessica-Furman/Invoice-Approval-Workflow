@@ -14,8 +14,8 @@ const statusLabel: Record<OtherStatus, string> = {
   missing_data: "MISSING DATA",
 };
 const statusChip: Record<OtherStatus, string> = {
-  all_data_found: "bg-emerald-100 text-emerald-700",
-  missing_data: "bg-amber-100 text-amber-800",
+  all_data_found: "bg-brand-green/15 text-brand-green",
+  missing_data: "bg-amber-400/15 text-amber-400",
 };
 
 function num(n: number | null): string {
@@ -27,8 +27,8 @@ function num(n: number | null): string {
 function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div>
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`mt-0.5 text-sm text-slate-100 ${mono ? "font-mono" : ""}`}>{value}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-white/40">{label}</div>
+      <div className={`mt-0.5 text-sm text-white ${mono ? "font-mono" : ""}`}>{value}</div>
     </div>
   );
 }
@@ -51,43 +51,43 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
   });
 
   return (
-    <div className="fixed inset-0 z-30 flex justify-end bg-slate-900/30" onClick={onClose}>
+    <div className="fixed inset-0 z-30 flex justify-end bg-black/40" onClick={onClose}>
       <div
-        className="h-full w-full max-w-3xl overflow-y-auto bg-slate-900 shadow-2xl"
+        className="h-full w-full max-w-3xl overflow-y-auto bg-brand-navy shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         {isLoading || !data ? (
-          <div className="p-10 text-slate-400">Loading…</div>
+          <div className="p-10 text-white/40">Loading…</div>
         ) : (
           <div className="p-6">
             {/* Header */}
             <div className="mb-6 flex items-center justify-between">
               <button
                 onClick={onClose}
-                className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-100"
+                className="flex items-center gap-2 text-sm text-white/50 hover:text-white"
               >
-                <ArrowLeft className="h-4 w-4" />
+                <ArrowLeft className="h-4 w-4" strokeWidth={1.75} />
                 {data.invoice_number ?? `#${data.id}`} — {date(data.date_received)}
               </button>
               <div className="flex items-center gap-3">
                 <span className={`rounded px-2 py-1 text-xs font-semibold ${statusChip[data.status]}`}>
                   {statusLabel[data.status]}
                 </span>
-                <button onClick={onClose} className="rounded p-1 hover:bg-slate-800">
-                  <X className="h-5 w-5 text-slate-400" />
+                <button onClick={onClose} className="rounded p-1 hover:bg-white/10">
+                  <X className="h-5 w-5 text-white/50" strokeWidth={1.75} />
                 </button>
               </div>
             </div>
 
             {/* Vendor + total headline */}
-            <div className="mb-6 flex items-end justify-between border-b border-slate-800 pb-5">
+            <div className="mb-6 flex items-end justify-between border-b border-white/10 pb-5">
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Vendor</div>
-                <div className="text-2xl font-bold text-slate-100">{data.vendor_name ?? "Unknown vendor"}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-white/40">Vendor</div>
+                <div className="font-display text-2xl font-semibold text-white">{data.vendor_name ?? "Unknown vendor"}</div>
               </div>
               <div className="text-right">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Total</div>
-                <div className="font-mono text-2xl font-bold text-slate-100">{money(data.total_invoice_cost)}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-white/40">Total</div>
+                <div className="font-mono text-2xl font-semibold text-white">{money(data.total_invoice_cost)}</div>
               </div>
             </div>
 
@@ -115,10 +115,10 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
             )}
 
             {/* Line-item table */}
-            <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-slate-400">Service Lines</h3>
-            <div className="overflow-hidden rounded-lg border border-slate-700">
+            <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-white/50">Service Lines</h3>
+            <div className="overflow-hidden rounded-lg border border-white/10">
               <table className="w-full text-sm">
-                <thead className="bg-slate-800 text-left text-[11px] uppercase tracking-wide text-slate-400">
+                <thead className="bg-white/[0.04] text-left text-[11px] uppercase tracking-wide text-white/40">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Description</th>
                     <th className="px-3 py-2 text-right font-semibold">Qty</th>
@@ -129,21 +129,21 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
                 <tbody>
                   {data.line_items.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={4} className="px-3 py-4 text-center text-white/40">
                         No service lines were parsed.
                       </td>
                     </tr>
                   )}
                   {data.line_items.map((li) => (
-                    <tr key={li.id} className="border-t border-slate-800">
-                      <td className="px-3 py-2 text-slate-200">{li.description ?? "—"}</td>
-                      <td className="px-3 py-2 text-right text-slate-400">
+                    <tr key={li.id} className="border-t border-white/10">
+                      <td className="px-3 py-2 text-white/80">{li.description ?? "—"}</td>
+                      <td className="px-3 py-2 text-right text-white/45">
                         {li.quantity === null ? "—" : num(li.quantity)}
                       </td>
-                      <td className="px-3 py-2 text-right text-slate-400">
+                      <td className="px-3 py-2 text-right text-white/45">
                         {li.unit_price === null ? "—" : money(li.unit_price)}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-100">{money(li.amount)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-white">{money(li.amount)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -165,7 +165,7 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
                   <button
                     onClick={() => setConfirmingDelete(false)}
                     disabled={del.isPending}
-                    className="rounded-lg border border-slate-600 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800"
+                    className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/70 hover:bg-white/10"
                   >
                     Cancel
                   </button>
@@ -175,7 +175,7 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
                   onClick={() => setConfirmingDelete(true)}
                   className="flex items-center gap-1.5 rounded-lg border border-rose-500/40 px-4 py-2 text-sm font-medium text-rose-400 hover:bg-rose-500/10"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4" strokeWidth={1.75} />
                   Delete Invoice
                 </button>
               )}
@@ -185,9 +185,9 @@ export function OtherDetailDrawer({ id, onClose }: { id: number; onClose: () => 
                   href={invoicePdfUrl(data.id)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
+                  className="flex items-center gap-1.5 rounded-lg border border-white/15 px-4 py-2 text-sm font-medium text-white/80 hover:bg-white/10"
                 >
-                  <FileText className="h-4 w-4" />
+                  <FileText className="h-4 w-4" strokeWidth={1.75} />
                   Open PDF
                 </a>
               )}

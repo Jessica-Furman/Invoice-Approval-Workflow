@@ -1,0 +1,71 @@
+/* Upbound Group — Color tokens
+   Palette pairs a bold, energetic green with deep, sophisticated darks.
+   60% dark foundation / 30% neutrals / 10% green accent. */
+
+:root {
+  /* ---- Base palette ---- */
+  --up-green: #B3FF33;      /* Signature accent — CTAs, highlights, the brand dot. Use sparingly. */
+  --up-navy: #35323D;       /* Primary dark surface — backgrounds, hero, headers */
+  --up-near-black: #1A1A1A; /* Wordmark, primary body text, high-contrast surfaces */
+  --up-charcoal: #3A3A3B;   /* Secondary dark surface, subtle depth layering */
+  --up-cool-grey: #C3C2C5;  /* Dividers, secondary text on dark, supporting panels */
+  --up-off-white: #F4F4F5;  /* Light backgrounds and section fills */
+  --up-white: #FFFFFF;
+
+  /* Green tints/shades for interaction states (green is bright; derive carefully) */
+  --up-green-hover: #A2EB2A;   /* pressed/hover darkening of green buttons */
+  --up-green-soft: #E9FFC2;    /* faint green wash for light surfaces */
+  --up-green-ring: rgba(179, 255, 51, 0.45); /* focus ring */
+
+  /* Dark tints for hover on dark surfaces */
+  --up-navy-hover: #413E4A;
+  --up-charcoal-hover: #48484A;
+
+  /* ---- Semantic aliases — light context (default) ---- */
+  --surface-page: var(--up-off-white);
+  --surface-card: var(--up-white);
+  --surface-sunken: #ECECEE;
+  --surface-inverse: var(--up-navy);
+
+  --text-strong: var(--up-near-black);
+  --text-body: #2A2A2C;
+  --text-muted: #6B6B70;
+  --text-on-dark: var(--up-off-white);
+  --text-on-dark-muted: var(--up-cool-grey);
+  --text-on-green: var(--up-near-black);
+
+  --border-subtle: #E1E1E4;
+  --border-default: #D3D3D7;
+  --border-strong: #B7B7BC;
+  --divider-on-dark: rgba(195, 194, 197, 0.24);
+
+  --accent: var(--up-green);
+  --accent-contrast: var(--up-near-black);
+
+  /* Focus + selection */
+  --focus-ring: var(--up-green-ring);
+
+  /* Status — kept within brand's restrained temperament */
+  --status-success: #3E9B4F;
+  --status-warning: #C98A16;
+  --status-danger: #C6453B;
+  --status-info: #3E6FB0;
+}
+
+/* ---- Dark context — apply on navy/near-black surfaces ---- */
+.up-dark,
+[data-theme="dark"] {
+  --surface-page: var(--up-navy);
+  --surface-card: var(--up-charcoal);
+  --surface-sunken: #2C2A33;
+  --surface-inverse: var(--up-off-white);
+
+  --text-strong: var(--up-off-white);
+  --text-body: var(--up-off-white);
+  --text-muted: var(--up-cool-grey);
+  --text-on-dark: var(--up-off-white);
+
+  --border-subtle: rgba(195, 194, 197, 0.16);
+  --border-default: rgba(195, 194, 197, 0.28);
+  --border-strong: rgba(195, 194, 197, 0.42);
+}

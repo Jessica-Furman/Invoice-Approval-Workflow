@@ -99,6 +99,13 @@ def _to_date(value) -> date | None:
 
 
 def _row_hash(resource_name: str, date_worked: str, investment_id: str, timeoff: bool, posted: bool) -> str:
+    """Idempotency key for one aggregated timesheet row.
+
+    `date_worked` MUST already be a canonical string (ISO 'YYYY-MM-DD'), never a raw source string:
+    the CSV export writes dates like '5/11/26' while the live Clarity API returns
+    '2026-05-11T00:00:00'. Hashing the raw text would make the same logical entry from the two
+    sources hash differently and duplicate — doubling a contractor's hours during matching.
+    """
     key = f"{normalize_name(resource_name)}|{date_worked}|{investment_id}|{int(timeoff)}|{int(posted)}"
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
 
@@ -121,9 +128,18 @@ def _read_table(path: str) -> pd.DataFrame:
 
 
 def import_timesheets(db: Session, csv_path: str) -> ImportResult:
-    result = ImportResult()
-
+    """Import a Clarity TimeEntry CSV/Excel export from disk (the manual-upload path)."""
     df = _read_table(csv_path)
+    return import_dataframe(db, df)
+
+
+def import_dataframe(db: Session, df: pd.DataFrame) -> ImportResult:
+    """Aggregate + idempotently upsert a Clarity TimeEntry table already loaded into a DataFrame.
+
+    Source-agnostic core shared by the CSV upload path (`import_timesheets`) and the live Clarity
+    API sync path (`clarity_sync.py`) — both just need to produce a DataFrame with these columns.
+    """
+    result = ImportResult()
     result.source_rows = len(df)
 
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -209,7 +225,15 @@ def import_timesheets(db: Session, csv_path: str) -> ImportResult:
         date_worked = _to_date(rd[COL_DATE_WORKED])
         timeoff = bool(rd["_timeoff"])
         posted = bool(rd["_posted"])
-        h = _row_hash(resource_name, rd[COL_DATE_WORKED], investment_id or "", timeoff, posted)
+        # Hash on the CANONICAL parsed date (ISO), not the raw source string, so a row from the CSV
+        # export and the same row from the Clarity API collapse to one entry instead of duplicating.
+        h = _row_hash(
+            resource_name,
+            date_worked.isoformat() if date_worked else "",
+            investment_id or "",
+            timeoff,
+            posted,
+        )
 
         display_name = clarity_to_first_last(resource_name)
         charge_code = rd.get("charge_code")
