@@ -1,6 +1,8 @@
 import axios from "axios";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+// Default to 127.0.0.1 (not "localhost"): uvicorn binds IPv4 127.0.0.1, but on Windows
+// "localhost" often resolves to IPv6 ::1 first, so the browser hits a refused [::1]:8000.
+const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 export const api = axios.create({ baseURL });
 

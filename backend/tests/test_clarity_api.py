@@ -90,3 +90,7 @@ def test_fetch_timesheets_skips_unresolved_contractor(monkeypatch):
 
     df = clarity_api.fetch_timesheets(["Nobody Here"], None, None)
     assert df.empty
+    # Empty result must still carry the expected columns, so import_dataframe treats it as a clean
+    # 0-row success instead of tripping the "missing required columns" guard (which would misreport a
+    # connected-but-no-data API as a fallback and turn the status dot yellow).
+    assert list(df.columns) == clarity_api._COLUMNS

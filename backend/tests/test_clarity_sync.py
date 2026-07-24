@@ -70,6 +70,21 @@ def test_successful_api_sync_upserts_and_marks_status(db: Session, monkeypatch):
     assert ts is not None and ts.hours == 20.0
 
 
+def test_empty_api_result_is_success_not_fallback(db: Session, monkeypatch):
+    """A contractor who isn't in Clarity (or has no in-period hours) yields an empty — but
+    well-formed — frame. That's the API working and answering, so status must stay 'api' (green
+    dot), NOT 'csv_fallback'. Regression for the 'missing required columns' false failure."""
+    _configure_api(monkeypatch)
+    empty_df = clarity_api.pd.DataFrame(columns=clarity_api._COLUMNS)
+    monkeypatch.setattr(clarity_api, "fetch_timesheets", lambda names, start, end: empty_df)
+
+    clarity_sync.sync_contractors(db, ["Ms.SHINIJA B"], date(2026, 1, 1), date(2026, 1, 31))
+
+    status = db.get(models.ClaritySyncStatus, 1)
+    assert status.source == "api"
+    assert status.last_error is None
+
+
 def test_api_failure_falls_back_without_touching_cached_data(db: Session, monkeypatch):
     _configure_api(monkeypatch)
 

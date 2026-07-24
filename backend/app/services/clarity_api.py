@@ -25,6 +25,25 @@ from app.config import settings
 RESOURCES_PATH = "/ppm/rest/v1/resources"
 TIMESHEETS_PATH = "/ppm/rest/v1/timesheets"
 
+# Column set the CSV import (`clarity_import.import_dataframe`) expects. We build the returned frame
+# with these columns explicitly so an EMPTY result (contractor not in Clarity, or no in-period hours)
+# is still a well-formed 0-row frame — not a column-less one that trips the "missing required columns"
+# guard and gets misreported as an API failure.
+_COLUMNS = [
+    "Resource Name",
+    "Resource Manager",
+    "Time Sheet Status",
+    "Period Start Date",
+    "Period Finish Date",
+    "Investment ID",
+    "Investment Name",
+    "Investment Manager",
+    "Charge Code",
+    "Task Name",
+    "Date Worked",
+    "Time Entry Hours",
+]
+
 
 def is_configured() -> bool:
     return bool(settings.CLARITY_API_URL and settings.CLARITY_API_CLIENT_ID and settings.CLARITY_API_KEY)
@@ -137,4 +156,5 @@ def fetch_timesheets(
                 continue
             rows.extend(_timesheet_rows(client, resource_id, start, end))
 
-    return pd.DataFrame(rows)
+    # Explicit columns so a 0-row result is still well-formed (see `_COLUMNS`).
+    return pd.DataFrame(rows, columns=_COLUMNS)
