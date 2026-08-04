@@ -161,6 +161,24 @@ class ClarityProject(Base):
     spend: Mapped[float | None] = mapped_column(Float)
 
 
+class ClarityResource(Base):
+    """A Clarity *resource* (contractor), keyed by normalized name for joining to timesheets/invoices.
+
+    Holds the contractor's cost center — the `department` lookup's DT code on the Clarity resource
+    record (e.g. 'DT500'). This is the cost center used for OPEX work (CapEx work is coded to the
+    company cost center H0003/AC000 instead). It lives only in the Clarity Resources API (not the
+    TimeEntry export), so it's populated by a separate read-only API sync."""
+
+    __tablename__ = "clarity_resources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contractor_name: Mapped[str | None] = mapped_column(String(255))
+    contractor_name_normalized: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    cost_center: Mapped[str | None] = mapped_column(String(32))  # department DT code, e.g. "DT500"
+    department_name: Mapped[str | None] = mapped_column(String(255))
+    resource_id: Mapped[str | None] = mapped_column(String(64))
+
+
 class ClaritySyncStatus(Base):
     """Single-row status of the last Clarity data sync, driving the dashboard's fallback indicator.
 

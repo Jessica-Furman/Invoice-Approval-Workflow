@@ -155,6 +155,11 @@ export interface ReportMonth {
   invoice_count: number;
 }
 
+export interface ReportProject {
+  project: string; // Clarity investment name, or "Other" / "Unresolved"
+  spend: number;
+}
+
 export interface ReportAggregates {
   period: { start: string | null; end: string | null; generated_from_invoices: number };
   totals: {
@@ -172,6 +177,7 @@ export interface ReportAggregates {
   by_company: Record<string, { spend: number; company_code: string | null; cost_center: string | null }>;
   by_cost_center: Record<string, number>;
   by_vendor: ReportVendor[];
+  by_project: ReportProject[];
   monthly_trend: ReportMonth[];
 }
 

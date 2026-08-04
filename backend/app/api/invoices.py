@@ -17,7 +17,15 @@ from app import models
 from app.config import settings
 from app.db.base import get_db
 from app.services.clarity_sync import sync_contractors
-from app.services.coupa import coupa_csv_bytes, coupa_csv_filename, project_accounting
+from app.services.clarity_resources import cost_center_map
+from app.services.coupa import (
+    coupa_csv_bytes,
+    coupa_csv_filename,
+    invoice_project_spend,
+    project_accounting,
+    project_cost_center_display,
+)
+from app.services.coupa import _norm_capex  # CapEx/OpEx normalizer (shared with the CSV builder)
 from app.services.export_excel import workbook_from_detail
 from app.services.ingestion import ingest_pdf
 from app.services.storage import LocalStorage
@@ -466,14 +474,38 @@ def invoice_detail(invoice_id: int, db: Session = Depends(get_db)) -> InvoiceDet
 
     # Enrich each project with the accounting fields the Excel export shows: cost center + LOB from the
     # project->company mapping (same rules as the Coupa CSV), and vendor from the invoice itself.
+    # Cost center is CapEx/OpEx-aware: CapEx -> company cost center (H0003/AC000); OpEx -> the Clarity
+    # department DT code(s) of the contractor(s) who worked the project (joined if they differ).
+    dt_map = cost_center_map(db)
+    rows_by_project: dict[str, list] = {}
+    for r in raw_rows:
+        if r.project_id:
+            rows_by_project.setdefault(r.project_id, []).append(r)
+    # Per-project spend for this invoice: each line's amount allocated across its projects by hours.
+    spend_by_project = invoice_project_spend(inv, db)
+
     project_outs: list[ClarityProjectOut] = []
     for p in projects:
         acct = project_accounting(p.project_id, p.project_name)
+        rows_p = rows_by_project.get(p.project_id or "", [])
+        # Majority CapEx/OpEx across the project's counted rows (hours-weighted), else the stored class.
+        votes: dict[str, float] = {}
+        for r in rows_p:
+            cx = _norm_capex(r.capex_opex)
+            if cx:
+                votes[cx] = votes.get(cx, 0.0) + (r.hours or 0.0)
+        capex_opex = max(votes, key=votes.get) if votes else _norm_capex(p.capex_opex)
+        dt_codes = {dt_map.get(r.contractor_name_normalized) for r in rows_p}
+        cost_center = project_cost_center_display(acct["company"], capex_opex, {c for c in dt_codes if c})
+
         out = ClarityProjectOut.model_validate(p)
         out.cost_code = acct["cost_code"]   # company code: RAC -> 5, ACIMA -> 67
-        out.cost_center = acct["cost_center"] or p.cost_center
+        # Don't fall back to the company cost center for OpEx (that's a CapEx value) — leave blank if
+        # no DT code resolved; only fall back to any stored project cost center.
+        out.cost_center = cost_center or p.cost_center
         out.lob = acct["lob"] or p.lob
         out.vendor = inv.vendor_name or p.vendor
+        out.spend = spend_by_project.get(p.project_id, out.spend)
         project_outs.append(out)
 
     base = _summary(inv)

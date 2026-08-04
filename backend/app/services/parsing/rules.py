@@ -175,14 +175,19 @@ def extract_header(text: str) -> dict:
                 vendor = s
                 break
     # Period detection, highest priority first:
-    #   1. an explicit "Period:" label + range, then 2. any explicit date range (incl. a long
-    #   "05 April 2026 to 25 April 2026" form). These are precise actual-work dates and win.
-    #   3. "for the month of <Month> <Year>" and 4. "<Month> <Year> Services" are month-level
+    #   1. an explicit "Period:" label + range, then 2. a "Time Card" export's actual worked-date
+    #   span, then 3. any explicit date range (incl. a long "05 April 2026 to 25 April 2026" form).
+    #   These are precise actual-work dates and win.
+    #   4. "for the month of <Month> <Year>" and 5. "<Month> <Year> Services" are month-level
     #   fallbacks (whole calendar month), used only when no explicit range is found.
     period = _labeled_period(text)
     if not period:
         period = _billed_from_to_period(text)  # Sogeti "Billed From/To Date" labeled range
     labeled = period is not None
+    if not period:
+        period = _timecard_actual_period(text)  # "Time Card" export: actual worked dates, not the report's request window
+        if period:
+            labeled = True
     if not period:
         period = _long_date_range(text)  # "05 April 2026 to 25 April 2026" (tolerates no spaces / line breaks)
     if not period:
@@ -229,6 +234,27 @@ def _billed_from_to_period(text: str) -> str | None:
     """A labeled 'Billed From Date / Billed To Date' range -> 'start - end' (authoritative)."""
     m = _BILLED_FROM_TO_RE.search(text)
     return f"{m.group(1)} - {m.group(2)}" if m else None
+
+
+# A "Time Card by company invoice" export (Odyssey and similar timekeeping systems) always prints
+# its REQUESTED reporting window as a header (e.g. "06/01/2026 - 06/30/2026"), even when the
+# contractor's actual work stopped partway through — a mid-period end date wouldn't shrink that
+# header. The true worked span is the min/max of the populated "Date" column in the daily table
+# below it (e.g. rows through "06/19/2026 Fri Work 8.00 8.00 8.00"), so derive the period from
+# those rows instead of trusting the header range.
+_TIMECARD_TITLE_RE = re.compile(r"Time\s*Card\s*by\s*company\s*invoice", re.IGNORECASE)
+_TIMECARD_DATE_ROW_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{4})\s+[A-Za-z]{3}\s+\S", re.MULTILINE)
+
+
+def _timecard_actual_period(text: str) -> str | None:
+    """Actual worked-date span from a 'Time Card by company invoice' daily table (see note above)."""
+    if not _TIMECARD_TITLE_RE.search(text):
+        return None
+    dates = sorted({d for s in _TIMECARD_DATE_ROW_RE.findall(text) if (d := parse_date(s))})
+    if not dates:
+        return None
+    start, end = dates[0], dates[-1]
+    return f"{start.month}/{start.day}/{start.year} - {end.month}/{end.day}/{end.year}"
 
 # A trailing date/month descriptor tacked onto a vendor/title line, e.g. "… - April 2026" or
 # "Odyssey Information Services, Inc. 4/30/2026" — noise that shouldn't be part of the vendor name.

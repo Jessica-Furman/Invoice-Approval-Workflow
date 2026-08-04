@@ -286,6 +286,13 @@ function ComparisonTable({ data }: { data: InvoiceDetailT }) {
   );
 }
 
+/** "Cloud Operations - Support and Maintenance (PR00123)" — name with its Clarity project ID
+ * alongside, falling back to whichever of the two is present. */
+function projectLabel(p: ClarityProject): string {
+  if (p.project_name && p.project_id) return `${p.project_name} (${p.project_id})`;
+  return p.project_name ?? p.project_id ?? "—";
+}
+
 function ProjectTable({ rows }: { rows: ClarityProject[] }) {
   return (
     <table className="w-full border-collapse text-sm">
@@ -293,7 +300,7 @@ function ProjectTable({ rows }: { rows: ClarityProject[] }) {
         <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
           <th className="py-2 font-medium">Type</th>
           <th className="py-2 font-medium">Project</th>
-          <th className="py-2 font-medium">Cost Code</th>
+          <th className="py-2 font-medium">Company Code</th>
           <th className="py-2 font-medium">Cost Center</th>
         </tr>
       </thead>
@@ -301,7 +308,7 @@ function ProjectTable({ rows }: { rows: ClarityProject[] }) {
         {rows.map((p) => (
           <tr key={p.id} className="border-b border-slate-100">
             <td className="py-2 text-slate-700">{p.capex_opex ?? "—"}</td>
-            <td className="py-2 text-slate-600">{p.project_name ?? p.project_id}</td>
+            <td className="py-2 text-slate-600">{projectLabel(p)}</td>
             <td className="py-2 text-slate-600">{p.cost_code ?? "—"}</td>
             <td className="py-2 text-slate-600">{p.cost_center ?? "—"}</td>
           </tr>

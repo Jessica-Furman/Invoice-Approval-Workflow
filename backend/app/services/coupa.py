@@ -27,6 +27,7 @@ import csv
 import io
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -133,11 +134,55 @@ INVOICE_LINE_COLUMNS = [
 ]
 
 # --- Accounting segment mappings (documentation/csv_rules) ---------------------------------------
-# Account Segment 1 = company code, Segment 2 = cost center — both keyed on the contractor's company
-# (RAC vs ACIMA). Segment 3 = the CapEx/OpEx GL code. (We emit only the CODE, never a CapEx/OpEx label.)
+# Account Segment 1 = company code, Segment 2 = cost center, Segment 3 = the CapEx/OpEx GL code.
+# (We emit only the CODE, never a CapEx/OpEx label.)
 COMPANY_CODE = {"RAC": "5", "ACIMA": "67"}
+# Company cost center — used for CAPEX work (and as the CapEx/OpEx-agnostic default). OPEX work is
+# coded to the contractor's Clarity department DT code instead (see `cost_center_for`).
 COST_CENTER = {"RAC": "H0003", "ACIMA": "AC000"}
-CAPEX_OPEX_CODE = {"CAPEX": "246010", "OPEX": "667070"}
+# CapEx/OpEx GL code. CAPEX is uniform; OPEX is 667040 for almost every vendor, but 667070 for a few
+# (Cigniti, Tata Consultancy) — matched case-insensitively against the invoice vendor name.
+CAPEX_GL_CODE = "246010"
+OPEX_GL_CODE_DEFAULT = "667040"
+_OPEX_GL_VENDOR_OVERRIDES = {"cigniti": "667070", "tata": "667070"}
+# Kept for callers that only need the set of valid CapEx/OpEx labels (e.g. `_norm_capex`) and for the
+# "other invoice" GL->label reverse map in reporting.py; contractor GL codes go through `gl_code_for`.
+CAPEX_OPEX_CODE = {"CAPEX": CAPEX_GL_CODE, "OPEX": OPEX_GL_CODE_DEFAULT}
+
+
+def gl_code_for(capex_opex: str | None, vendor_name: str | None) -> str:
+    """The CapEx/OpEx GL code for a line: CAPEX -> 246010; OPEX -> 667070 for override vendors
+    (Cigniti/Tata), else 667040. Empty string when the CapEx/OpEx class is unknown."""
+    cx = _norm_capex(capex_opex)
+    if cx == "CAPEX":
+        return CAPEX_GL_CODE
+    if cx == "OPEX":
+        v = (vendor_name or "").lower()
+        for key, code in _OPEX_GL_VENDOR_OVERRIDES.items():
+            if key in v:
+                return code
+        return OPEX_GL_CODE_DEFAULT
+    return ""
+
+
+def cost_center_for(company: str | None, capex_opex: str | None, dt_code: str | None) -> str:
+    """The cost center for a line: OPEX -> the contractor's Clarity department DT code (e.g. DT500);
+    CAPEX (or unknown class) -> the company cost center (RAC H0003 / ACIMA AC000). Blank if neither
+    resolves."""
+    if _norm_capex(capex_opex) == "OPEX":
+        return dt_code or ""
+    return COST_CENTER.get(company, "")
+
+
+def project_cost_center_display(
+    company: str | None, capex_opex: str | None, dt_codes: set[str] | None
+) -> str:
+    """Cost center shown for a PROJECT row (drawer / Excel), which can span multiple contractors:
+    OPEX -> the distinct DT code(s) of the contractors who worked it (joined if they differ);
+    CAPEX (or unknown) -> the company cost center. Blank if unresolved."""
+    if _norm_capex(capex_opex) == "OPEX":
+        return ", ".join(sorted(c for c in (dt_codes or set()) if c))
+    return COST_CENTER.get(company, "")
 
 # Company is resolved from the project's Line of Business in documentation/Company_by_Project.csv,
 # keyed by Project ID. LOB "/Upbound" or "/Upbound/RAC" -> RAC; "/Upbound/Acima" -> ACIMA.
@@ -560,27 +605,28 @@ def _capex_opex_for(
     return _norm_capex((ts.capex_opex if ts else None) or (project.capex_opex if project else None))
 
 
-def _segment_values(company: str | None, capex_opex: str | None) -> dict[str, str]:
-    """The three Account Segment values for a (company, CapEx/OpEx) pair; blank where unresolved.
-
-    Segment 1 = company code, Segment 2 = cost center, Segment 3 = CapEx/OpEx GL code (code only —
-    no CapEx/OpEx label is written).
-    """
+def _segment_values(company: str | None, cost_center: str, gl_code: str) -> dict[str, str]:
+    """The three Account Segment values; blank where unresolved. Segment 1 = company code,
+    Segment 2 = cost center (already resolved — CAPEX company code / OPEX DT code), Segment 3 = the
+    CapEx/OpEx GL code (already resolved for the vendor). No CapEx/OpEx label is ever written."""
     return {
         "Account Segment 1": COMPANY_CODE.get(company, ""),
-        "Account Segment 2": COST_CENTER.get(company, ""),
-        "Account Segment 3": CAPEX_OPEX_CODE.get(capex_opex, ""),
+        "Account Segment 2": cost_center,
+        "Account Segment 3": gl_code,
     }
 
 
-def _clarity_company_breakdown(
+def _clarity_project_breakdown(
     li: models.InvoiceLineItem, inv: models.Invoice, db: Session | None
-) -> dict[tuple[str | None, str | None], float] | None:
-    """Sum a matched contractor's in-period Clarity hours grouped by (company, CapEx/OpEx).
+) -> dict[str, float] | None:
+    """Sum a matched contractor's in-period Clarity hours grouped by project (Investment Name).
 
-    Uses the same filter as matching — counted (Posted or Submitted), not time-off, Date Worked within
-    the line's period — so the buckets sum to the matched hours. Returns None when it can't be computed
-    (no db / no matched Clarity row), so the caller falls back to a single invoice-hours line.
+    Same billable filter as matching — counted (Posted or Submitted), not time-off, Date
+    Worked within the line's period. A contractor billed on this line may have logged hours against
+    more than one Clarity investment in the period; the caller uses each project's share of these
+    hours to split the line's dollar amount proportionally. Returns None when it can't be computed
+    (no db / no matched Clarity row / zero in-period hours), so the caller attributes the line's full
+    amount to "Unresolved" instead.
     """
     ts = li.matched_clarity
     if db is None or ts is None or not ts.contractor_name_normalized:
@@ -596,12 +642,113 @@ def _clarity_company_breakdown(
             models.ClarityTimesheet.date_worked >= start,
             models.ClarityTimesheet.date_worked <= end,
         )
-    groups: dict[tuple[str | None, str | None], float] = {}
+    groups: dict[str, float] = {}
     for e in db.scalars(q).all():
-        key = (_company_for_project(e.project_id, e.investment_name), _norm_capex(e.capex_opex))
-        groups[key] = groups.get(key, 0.0) + (e.hours or 0.0)
+        label = e.investment_name or e.project_id or "Unresolved"
+        groups[label] = groups.get(label, 0.0) + (e.hours or 0.0)
     groups = {k: round(v, 2) for k, v in groups.items() if v}
     return groups or None
+
+
+@dataclass
+class ProjectSplit:
+    """One (contractor, project) slice of a contractor's in-period Clarity hours, with the accounting
+    attributes needed to code its own Coupa CSV line."""
+
+    project_id: str | None
+    project_name: str | None
+    hours: float
+    company: str | None       # 'RAC' | 'ACIMA' | None
+    capex_opex: str | None    # 'CAPEX' | 'OPEX' | None
+
+
+def _clarity_project_splits(
+    li: models.InvoiceLineItem, inv: models.Invoice, db: Session | None
+) -> list[ProjectSplit] | None:
+    """A matched contractor's in-period Clarity hours split per project (Investment), each carrying
+    its company + CapEx/OpEx so it can be coded on its own CSV line.
+
+    Same billable filter as the other breakdowns (Posted/Submitted, not time-off, Date Worked within
+    the line's period). Groups by project id; per group sums hours, keeps the investment name, resolves
+    company, and takes the majority CapEx/OpEx across that project's rows. Returns None when it can't be
+    computed (no db / no matched Clarity row / no in-period hours) so the caller falls back to one line.
+    """
+    ts = li.matched_clarity
+    if db is None or ts is None or not ts.contractor_name_normalized:
+        return None
+    start, end = _line_period(li, inv)
+    q = select(models.ClarityTimesheet).where(
+        models.ClarityTimesheet.contractor_name_normalized == ts.contractor_name_normalized,
+        countable_status_filter(),  # Posted OR Submitted
+        models.ClarityTimesheet.is_time_off.is_(False),
+    )
+    if start and end:
+        q = q.where(
+            models.ClarityTimesheet.date_worked >= start,
+            models.ClarityTimesheet.date_worked <= end,
+        )
+    # project_id -> accumulator
+    acc: dict[str | None, dict] = {}
+    for e in db.scalars(q).all():
+        pid = e.project_id
+        a = acc.setdefault(pid, {
+            "name": e.investment_name, "hours": 0.0, "capex_votes": defaultdict(float),
+        })
+        a["hours"] += e.hours or 0.0
+        cx = _norm_capex(e.capex_opex)
+        if cx:
+            a["capex_votes"][cx] += e.hours or 0.0
+        if not a["name"] and e.investment_name:
+            a["name"] = e.investment_name
+
+    splits: list[ProjectSplit] = []
+    for pid, a in acc.items():
+        if round(a["hours"], 2) <= 0:
+            continue
+        votes = a["capex_votes"]
+        capex_opex = max(votes, key=votes.get) if votes else None
+        splits.append(ProjectSplit(
+            project_id=pid,
+            project_name=a["name"],
+            hours=round(a["hours"], 2),
+            company=_company_for_project(pid, a["name"]),
+            capex_opex=capex_opex,
+        ))
+    # Stable, readable order: biggest hours first.
+    splits.sort(key=lambda s: s.hours, reverse=True)
+    return splits or None
+
+
+def _line_weight(li: models.InvoiceLineItem) -> float:
+    """The line's dollar weight: its invoice amount, else hours x rate, else 0."""
+    if li.amount is not None:
+        return li.amount
+    if li.hours is not None and li.rate is not None:
+        return li.hours * li.rate
+    return 0.0
+
+
+def invoice_project_spend(inv: models.Invoice, db: Session | None) -> dict[str, float]:
+    """{project_id -> spend} for one invoice: each line's invoice amount allocated across that
+    contractor's Clarity projects proportional to hours (so per-project spend sums to the invoice
+    total). Same proportional method as the executive report's 'Spend by Project'. A line with no
+    project split is credited whole to its matched project id, if any."""
+    spend: dict[str, float] = defaultdict(float)
+    for li in inv.line_items:
+        weight = _line_weight(li)
+        if weight == 0:
+            continue
+        splits = _clarity_project_splits(li, inv, db)
+        total = sum(s.hours for s in splits) if splits else 0.0
+        if splits and total > 0:
+            for s in splits:
+                if s.project_id:
+                    spend[s.project_id] += weight * (s.hours / total)
+        else:
+            pid = li.matched_clarity.project_id if li.matched_clarity else None
+            if pid:
+                spend[pid] += weight
+    return {k: round(v, 2) for k, v in spend.items()}
 
 
 def _line_description(li: models.InvoiceLineItem, inv: models.Invoice) -> str:
@@ -665,49 +812,80 @@ def _line_row(
     }
 
 
+def _dt_cost_center_map(db: Session | None) -> dict[str, str]:
+    """{normalized contractor name -> Clarity department DT code}, for OPEX cost-center coding."""
+    if db is None:
+        return {}
+    from app.services.clarity_resources import cost_center_map  # lazy: avoids import cycle
+    return cost_center_map(db)
+
+
+def _desc_triple(gl_code: str, cost_center: str, project_id: str | None) -> str:
+    """The accounting triple appended to a line description: '(GLcode-CostCenter-ProjectID)', e.g.
+    '(667040-DT500-PR00099)'. Empty when there's no project id to anchor it."""
+    if not project_id:
+        return ""
+    return f"({gl_code}-{cost_center}-{project_id})"
+
+
+def _append_triple(description: str, triple: str) -> str:
+    return f"{description} {triple}" if triple else description
+
+
 def build_line_rows(
     inv: models.Invoice, db: Session | None = None, *, matched_only: bool = False
 ) -> list[dict[str, str]]:
     """`Invoice Line` rows for the invoice.
 
-    Normally one row per contractor line item. But when a contractor's matched Clarity hours span
-    more than one (company, CapEx/OpEx) bucket, that line is SPLIT into one row per bucket — each with
-    that bucket's Clarity hours and its own company code / cost center / CapEx-OpEx segments — so RAC
-    and ACIMA (and CapEx vs OpEx) work is coded separately for Coupa.
+    One row per (contractor, Clarity project): a contractor's matched in-period hours are split per
+    project (Investment), each row carrying that project's hours and its own company code / cost center
+    / CapEx-OpEx GL code segments. Cost center is the company code (H0003/AC000) for CapEx work and the
+    contractor's Clarity department DT code for OpEx work; the GL code is vendor-aware for OpEx. Each
+    description ends with the accounting triple '(GLcode-CostCenter-ProjectID)'.
 
-    With `matched_only=True` (draft CSV for a flagged invoice), only contractors that matched Clarity
-    get lines; unmatched contractors are skipped for the user to fill in by hand.
+    A contractor with no Clarity project split (no match / no in-period hours) falls back to one line
+    using the invoice's own hours. With `matched_only=True` (draft CSV for a flagged invoice), only
+    contractors that matched Clarity get lines; unmatched contractors are skipped to fill in by hand.
     """
+    dt_map = _dt_cost_center_map(db)
     rows: list[dict[str, str]] = []
     line_no = 1
     for li in inv.line_items:
         if matched_only and li.line_status != models.STATUS_MATCHED:
             continue
-        breakdown = _clarity_company_breakdown(li, inv, db)
+        norm = li.matched_clarity.contractor_name_normalized if li.matched_clarity else None
+        dt_code = dt_map.get(norm) if norm else None
+        splits = _clarity_project_splits(li, inv, db)
 
-        if breakdown and len(breakdown) > 1:
+        if splits:
             start, end = _line_period(li, inv)
             period = f"{_fmt_date(start)}-{_fmt_date(end)}" if start and end else ""
             name = li.contractor_name or "Contractor"
-            # Stable order: RAC before ACIMA before unknown, then CAPEX before OPEX.
-            for (company, capex_opex), hours in sorted(
-                breakdown.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))
-            ):
-                label = " ".join(p for p in (company, capex_opex) if p) or "unclassified"
-                desc = " - ".join(p for p in (name, label, period) if p)
+            for s in splits:
+                cost_center = cost_center_for(s.company, s.capex_opex, dt_code)
+                gl_code = gl_code_for(s.capex_opex, inv.vendor_name)
+                triple = _desc_triple(gl_code, cost_center, s.project_id)
+                base = " - ".join(p for p in (name, s.project_name, period) if p)
                 rows.append(
-                    _line_row(inv, li, line_no, hours=hours, description=desc,
-                              segments=_segment_values(company, capex_opex))
+                    _line_row(inv, li, line_no, hours=s.hours,
+                              description=_append_triple(base, triple),
+                              segments=_segment_values(s.company, cost_center, gl_code))
                 )
                 line_no += 1
             continue
 
-        # Single bucket (or no Clarity breakdown): one line using the invoice's own hours.
+        # No Clarity split: one line using the invoice's own hours.
         project = _project_for(li, db)
-        segments = _segment_values(_company_for(li), _capex_opex_for(li, project))
+        company = _company_for(li)
+        capex_opex = _capex_opex_for(li, project)
+        cost_center = cost_center_for(company, capex_opex, dt_code)
+        gl_code = gl_code_for(capex_opex, inv.vendor_name)
+        pid = li.matched_clarity.project_id if li.matched_clarity else None
+        triple = _desc_triple(gl_code, cost_center, pid)
         rows.append(
-            _line_row(inv, li, line_no, hours=li.hours, description=_line_description(li, inv),
-                      segments=segments)
+            _line_row(inv, li, line_no, hours=li.hours,
+                      description=_append_triple(_line_description(li, inv), triple),
+                      segments=_segment_values(company, cost_center, gl_code))
         )
         line_no += 1
     return rows

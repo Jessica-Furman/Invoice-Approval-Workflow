@@ -26,12 +26,14 @@ from app.services.coupa import (
     COMPANY_CODE,
     COST_CENTER,
     _capex_opex_for,
+    _clarity_project_breakdown,
     _company_for_project,
     _norm_capex,
 )
 
 LLM_MODEL = "claude-opus-4-8"
 TOP_VENDORS = 15
+TOP_PROJECTS = 5
 
 _GL_TO_CAPEX = {code: label for label, code in CAPEX_OPEX_CODE.items()}  # 246010 -> CAPEX, ...
 
@@ -85,6 +87,10 @@ def compute_aggregates(db: Session, start: date | None = None, end: date | None 
     capex_opex: dict[str, float] = defaultdict(float)
     by_company: dict[str, float] = defaultdict(float)
     by_cost_center: dict[str, float] = defaultdict(float)
+    # Project spend: a contractor's line amount split across Clarity investments by that
+    # investment's share of the contractor's counted hours in the line's period. "Unresolved"
+    # catches lines with no Clarity match (or zero counted in-period hours).
+    by_project: dict[str, float] = defaultdict(float)
 
     for inv in contractor:
         hint = _norm_capex(((inv.raw_extraction or {}).get("llm_accounting") or {}).get("capex_opex"))
@@ -107,6 +113,14 @@ def compute_aggregates(db: Session, start: date | None = None, end: date | None 
             cc = COST_CENTER.get(company) if company else None
             by_cost_center[cc or "unresolved"] += w
 
+            proj_hours = _clarity_project_breakdown(li, inv, db)
+            total_proj_hours = sum(proj_hours.values()) if proj_hours else 0
+            if proj_hours and total_proj_hours:
+                for label, hours in proj_hours.items():
+                    by_project[label] += w * (hours / total_proj_hours)
+            else:
+                by_project["Unresolved"] += w
+
     # --- Other invoices: GL account -> CAPEX/OPEX, stored cost center -------------------------
     for inv in other:
         w = inv.total_invoice_cost or 0
@@ -117,6 +131,8 @@ def compute_aggregates(db: Session, start: date | None = None, end: date | None 
         capex_opex[cls or "unclassified"] += w
         cc = (raw.get("cost_center") or "").strip() or "unresolved"
         by_cost_center[cc] += w
+        # "Other" invoices (hardware/software) have no Clarity project link today.
+        by_project["Unresolved"] += w
 
     # --- Vendors (both types, top N + Other) ---------------------------------------------------
     vendor_rows: dict[str, dict] = {}
@@ -137,6 +153,19 @@ def compute_aggregates(db: Session, start: date | None = None, end: date | None 
             "type": "mixed",
         })
     by_vendor = [{**r, "spend": _r(r["spend"])} for r in top]
+
+    # --- Projects (top N + Other, "Unresolved" kept separate) ----------------------------------
+    named_projects = sorted(
+        ((name, amt) for name, amt in by_project.items() if name != "Unresolved" and amt > 0),
+        key=lambda kv: kv[1], reverse=True,
+    )
+    top_projects = [{"project": name, "spend": _r(amt)} for name, amt in named_projects[:TOP_PROJECTS]]
+    rest_projects = named_projects[TOP_PROJECTS:]
+    if rest_projects:
+        top_projects.append({"project": "Other", "spend": _r(sum(amt for _, amt in rest_projects))})
+    unresolved_project_spend = by_project.get("Unresolved", 0.0)
+    if unresolved_project_spend > 0:
+        top_projects.append({"project": "Unresolved", "spend": _r(unresolved_project_spend)})
 
     # --- Monthly trend --------------------------------------------------------------------------
     months: dict[str, dict] = defaultdict(lambda: {"contractor_spend": 0.0, "other_spend": 0.0,
@@ -192,6 +221,7 @@ def compute_aggregates(db: Session, start: date | None = None, end: date | None 
         "by_cost_center": {k: _r(v) for k, v in sorted(by_cost_center.items(),
                                                        key=lambda kv: kv[1], reverse=True)},
         "by_vendor": by_vendor,
+        "by_project": top_projects,
         "monthly_trend": monthly_trend,
     }
 
@@ -207,12 +237,12 @@ sections:
 3-4 sentences: total spend, invoice volume, headline composition.
 
 ## Key Insights
-4-6 bullets, each citing specific figures (top vendors, concentration, trend direction,
-CAPEX vs OPEX balance, match rate).
+4-6 bullets, each citing specific figures (top vendors, top projects by spend, concentration,
+trend direction, CAPEX vs OPEX balance, match rate).
 
 ## Spend Composition
-Short commentary on CAPEX vs OPEX split and the RAC vs Acima company split (cost centers H0003 /
-AC000).
+Short commentary on CAPEX vs OPEX split, the RAC vs Acima company split (cost centers H0003 /
+AC000), and which project(s) drove the most spend this period.
 
 ## Risks & Flags
 Flagged/unmatched invoices, unclassified spend, low parse confidence — anything needing attention.
@@ -223,7 +253,9 @@ Flagged/unmatched invoices, unclassified spend, low parse confidence — anythin
 Rules: use ONLY the figures provided — never invent or extrapolate numbers. Format money like
 $1,234,567.89 (or $1.2M where a round figure reads better). "vendor_stated_*" buckets are
 CAPEX/OPEX classifications read off the invoice itself rather than from Clarity — treat them as
-lower-confidence. "unclassified"/"unresolved" mean the data pipeline could not classify that spend.
+lower-confidence. In `by_project`, "Other" is the sum of projects outside the top 5 and
+"Unresolved" is spend that couldn't be attributed to a specific Clarity project — both mean the
+data pipeline could not classify that spend, same as "unclassified"/"unresolved" elsewhere.
 
 Aggregates:
 """

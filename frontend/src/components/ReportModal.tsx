@@ -136,6 +136,20 @@ const tooltipStyle = {
   formatter: (v: unknown) => (typeof v === "number" ? money(v) : String(v ?? "—")),
 };
 
+/** Single-line Y-axis category tick: Recharts wraps long labels onto multiple lines by default,
+ * which overlaps adjacent rows in a dense bar chart — truncate to one line instead. Full name is
+ * still shown via the native SVG <title> tooltip on hover. */
+function TruncatedTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
+  const value = payload?.value ?? "";
+  const short = value.length > 22 ? `${value.slice(0, 21)}…` : value;
+  return (
+    <text x={x} y={y} dy={4} textAnchor="end" fontSize={11} fill={INK2}>
+      <title>{value}</title>
+      {short}
+    </text>
+  );
+}
+
 function Charts({ agg }: { agg: ReportAggregates }) {
   const capexData = Object.entries(agg.capex_opex.amounts)
     .filter(([, v]) => v > 0)
@@ -155,6 +169,7 @@ function Charts({ agg }: { agg: ReportAggregates }) {
     }));
 
   const vendorData = agg.by_vendor.filter((v) => v.spend > 0).slice(0, 10);
+  const projectData = agg.by_project.filter((p) => p.spend > 0);
   const hasTrend = agg.monthly_trend.length > 0;
 
   return (
@@ -234,9 +249,25 @@ function Charts({ agg }: { agg: ReportAggregates }) {
             <BarChart data={vendorData} layout="vertical" margin={{ left: 8, right: 34 }}>
               <CartesianGrid horizontal={false} stroke={GRID} />
               <XAxis type="number" tickFormatter={compact} tick={{ fontSize: 11, fill: MUTED }} />
-              <YAxis type="category" dataKey="vendor" width={150} tick={{ fontSize: 11, fill: INK2 }} />
+              <YAxis type="category" dataKey="vendor" width={150} tick={<TruncatedTick />} interval={0} />
               <Tooltip {...tooltipStyle} cursor={{ fill: "rgba(0,0,0,0.03)" }} />
               <Bar dataKey="spend" fill={BLUE} radius={[0, 4, 4, 0]} barSize={16} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      <Card title="Top Projects by Spend">
+        {projectData.length === 0 ? (
+          <p className="text-sm text-slate-400">No project-attributed spend in this period.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={Math.max(200, projectData.length * 30)}>
+            <BarChart data={projectData} layout="vertical" margin={{ left: 8, right: 34 }}>
+              <CartesianGrid horizontal={false} stroke={GRID} />
+              <XAxis type="number" tickFormatter={compact} tick={{ fontSize: 11, fill: MUTED }} />
+              <YAxis type="category" dataKey="project" width={150} tick={<TruncatedTick />} interval={0} />
+              <Tooltip {...tooltipStyle} cursor={{ fill: "rgba(0,0,0,0.03)" }} />
+              <Bar dataKey="spend" fill={GREEN} radius={[0, 4, 4, 0]} barSize={16} />
             </BarChart>
           </ResponsiveContainer>
         )}

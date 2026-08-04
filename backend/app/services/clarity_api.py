@@ -133,6 +133,45 @@ def _timesheet_rows(client: httpx.Client, resource_id: int, start: date | None, 
     return rows
 
 
+def _fetch_resource_department(client: httpx.Client, name: str) -> dict | None:
+    """Resolve a contractor to their Clarity resource and read its `department` lookup — the cost
+    center used for OPEX work. Returns {'resource_id', 'cost_center', 'department_name'} or None when
+    the contractor isn't found. `department.id` is the DT code (e.g. 'DT500'); `displayValue` its name."""
+    resource_id = _resolve_resource_id(client, name)
+    if resource_id is None:
+        return None
+    full = _get(client, f"{RESOURCES_PATH}/{resource_id}")
+    dept = full.get("department") or {}
+    return {
+        "resource_id": str(resource_id),
+        "cost_center": (dept.get("id") or None),          # DT code, e.g. "DT500"
+        "department_name": (dept.get("displayValue") or None),
+    }
+
+
+def fetch_resource_cost_centers(contractor_names: list[str]) -> dict[str, dict]:
+    """Fetch each contractor's cost center (department DT code) from the Clarity Resources API.
+
+    Returns {contractor_name -> {'resource_id', 'cost_center', 'department_name'}} for the names that
+    resolved to a Clarity resource (unresolved names are simply omitted). Raises on transport/auth
+    failure — the caller (a sync) decides how to handle that."""
+    if not is_configured():
+        raise RuntimeError(
+            "Clarity API is not configured (CLARITY_API_URL/CLARITY_API_CLIENT_ID/CLARITY_API_KEY unset)"
+        )
+    out: dict[str, dict] = {}
+    with httpx.Client(
+        base_url=settings.CLARITY_API_URL.rstrip("/"),
+        headers=_headers(),
+        timeout=settings.CLARITY_API_TIMEOUT_SECONDS,
+    ) as client:
+        for name in contractor_names:
+            info = _fetch_resource_department(client, name)
+            if info:
+                out[name] = info
+    return out
+
+
 def fetch_timesheets(
     contractor_names: list[str], start: date | None, end: date | None
 ) -> pd.DataFrame:

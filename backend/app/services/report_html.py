@@ -299,6 +299,7 @@ def report_html_bytes(aggregates: dict, narrative: str | None) -> bytes:
     ]
     vendor_rows = [(v["vendor"], v["spend"]) for v in aggregates["by_vendor"] if v["spend"] > 0]
     cost_center_rows = [(k, v) for k, v in aggregates["by_cost_center"].items() if v > 0]
+    project_rows = [(p["project"], p["spend"]) for p in aggregates.get("by_project", []) if p["spend"] > 0]
 
     narrative_html = (
         f'<div class="card narrative">{_md_to_html(narrative)}</div>'
@@ -340,6 +341,8 @@ def report_html_bytes(aggregates: dict, narrative: str | None) -> bytes:
   </div>
 
   <div class="card"><h2>Top Vendors</h2>{_hbar_svg(vendor_rows)}</div>
+
+  <div class="card"><h2>Top Projects by Spend</h2>{_hbar_svg(project_rows, color=GREEN)}</div>
 
   <div class="card"><h2>Monthly Spend Trend</h2>{_trend_svg(aggregates["monthly_trend"])}</div>
 

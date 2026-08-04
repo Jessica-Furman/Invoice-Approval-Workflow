@@ -51,3 +51,12 @@ def sync_contractors(
         status.last_error = str(e)
 
     db.commit()
+
+    # Also refresh these contractors' department DT cost centers (used for OPEX coding in the Coupa
+    # CSV / Excel / drawer). Best-effort and isolated: a failure here must never affect the sync above.
+    try:
+        from app.services.clarity_resources import sync_resource_cost_centers_for
+
+        sync_resource_cost_centers_for(db, contractor_names)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Clarity resource cost-center sync failed (non-fatal): %s", e)

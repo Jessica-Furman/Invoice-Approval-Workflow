@@ -121,19 +121,51 @@ def test_capex_segment_is_code_only_and_unresolved_company_is_blank(db: Session)
     assert line["Account Segment 4"] == ""         # no CapEx/OpEx label is written
 
 
-def test_rac_project_maps_company_and_cost_center(db: Session):
+def test_rac_opex_uses_company_code_and_contractor_dt_cost_center(db: Session):
+    # OPEX work: Segment 2 is the contractor's Clarity department DT code (from clarity_resources),
+    # NOT the company cost center; the OPEX GL code defaults to 667040 for non-override vendors.
+    db.add(models.ClarityResource(
+        contractor_name="Jane Doe",
+        contractor_name_normalized=normalize_name("Jane Doe"), cost_center="DT900",
+    ))
     inv = _matched_invoice(db, investment="RACPad Time Zone Sync - Phase 1", capex="OPEX")
     line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
     assert line["Account Segment 1"] == "5"        # RAC company code
-    assert line["Account Segment 2"] == "H0003"    # RAC cost center
-    assert line["Account Segment 3"] == "667070"   # OPEX GL code
+    assert line["Account Segment 2"] == "DT900"    # OPEX -> contractor's DT cost center
+    assert line["Account Segment 3"] == "667040"   # OPEX GL default (AVASOFT isn't an override vendor)
+    assert "(667040-DT900-PR1)" in line["Description*"]  # accounting triple appended
 
 
 def test_acima_project_maps_company_and_cost_center(db: Session):
     inv = _matched_invoice(db, investment="Acima Mobile App Replatform - All Phases", capex="CAPEX")
     line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
     assert line["Account Segment 1"] == "67"       # ACIMA company code
-    assert line["Account Segment 2"] == "AC000"    # ACIMA cost center
+    assert line["Account Segment 2"] == "AC000"    # CAPEX -> company cost center
+    assert line["Account Segment 3"] == "246010"   # CAPEX GL code
+    assert "(246010-AC000-PR1)" in line["Description*"]  # accounting triple appended
+
+
+def test_opex_gl_code_override_for_tata(db: Session):
+    # Cigniti and Tata Consultancy bill OPEX to GL 667070 (everyone else 667040).
+    db.add(models.ClarityResource(
+        contractor_name="Jane Doe",
+        contractor_name_normalized=normalize_name("Jane Doe"), cost_center="DT600",
+    ))
+    inv = _matched_invoice(db, investment="RAC Store POS - Support and Maintenance", capex="OPEX")
+    inv.vendor_name = "Tata Consultancy Services Limited"
+    db.commit()
+    line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
+    assert line["Account Segment 3"] == "667070"          # Tata OPEX override
+    assert "(667070-DT600-PR1)" in line["Description*"]
+
+
+def test_opex_without_synced_resource_leaves_cost_center_blank(db: Session):
+    # No clarity_resources row for the contractor -> we can't code the OPEX cost center; leave it blank
+    # rather than wrongly using the company (CapEx) cost center.
+    inv = _matched_invoice(db, investment="RACPad Time Zone Sync - Phase 1", capex="OPEX")
+    line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
+    assert line["Account Segment 1"] == "5"        # company still resolves
+    assert line["Account Segment 2"] == ""         # OPEX DT code unavailable -> blank (not H0003)
 
 
 def test_filename_is_vendor_plus_invoice_number(db: Session):
@@ -187,11 +219,16 @@ def test_company_segments_resolved_by_project_id(db: Session, monkeypatch):
             matched_clarity_id=ts.id, diff={"clarity_hours": 40.0},
         )],
     )
-    db.add(inv); db.commit(); db.refresh(inv)
+    db.add(inv)
+    db.add(models.ClarityResource(
+        contractor_name="Jane Doe",
+        contractor_name_normalized=normalize_name("Jane Doe"), cost_center="DT100",
+    ))
+    db.commit(); db.refresh(inv)
     line = dict(zip(INVOICE_LINE_COLUMNS, _parse(coupa_csv_bytes(inv, db))[3]))
     assert line["Account Segment 1"] == "67"      # ACIMA company code (by project id)
-    assert line["Account Segment 2"] == "AC000"   # ACIMA cost center
-    assert line["Account Segment 3"] == "667070"  # OPEX GL code
+    assert line["Account Segment 2"] == "DT100"   # OPEX -> contractor DT cost center
+    assert line["Account Segment 3"] == "667040"  # OPEX GL default (AVASOFT)
 
 
 def _split_invoice(db: Session):
@@ -249,6 +286,17 @@ def test_single_company_contractor_stays_one_line(db: Session, monkeypatch):
     line_rows = [r for r in _parse(coupa_csv_bytes(inv, db))[2:] if r[0] == "Invoice Line"]
     assert len(line_rows) == 1
     assert dict(zip(INVOICE_LINE_COLUMNS, line_rows[0]))["Quantity"] == "40"  # invoice hours
+
+
+def test_invoice_project_spend_allocates_amount_by_hours(db: Session):
+    # A $7000 line split 30h/40h across two projects -> spend allocated proportionally, summing to total.
+    from app.services.coupa import invoice_project_spend
+
+    inv = _split_invoice(db)  # 30h on PRAC, 40h on PACI, invoice amount 7000
+    spend = invoice_project_spend(inv, db)
+    assert spend["PRAC"] == 3000.0     # 7000 * 30/70
+    assert spend["PACI"] == 4000.0     # 7000 * 40/70
+    assert round(sum(spend.values()), 2) == 7000.0  # reconciles to the invoice total
 
 
 def test_matched_invoice_gets_real_chart_of_accounts(db: Session):
