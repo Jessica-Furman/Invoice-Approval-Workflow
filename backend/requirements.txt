@@ -5,7 +5,7 @@ sqlalchemy==2.0.36
 pydantic==2.10.4
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
-python-multipart==0.0.20
+python-multipart==0.0.32
 
 # Clarity import + Excel export (M2, M6)
 pandas==2.2.3
